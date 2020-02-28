@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdsync-config
+data:
+  template.txt: |
+    primary on-call: <@{{.TeamPrimary}}> secondary on-call: <@{{.TeamSecondary}}>

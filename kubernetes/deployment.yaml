@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: pdsync
+  name: pdsync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pdsync
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        app: pdsync
+    spec:
+      containers:
+      - image: timoreimann/pdsync:latest
+        name: pdsync
+        env:
+          - name: PAGERDUTY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: pdsync
+                key: pagerduty-token
+                optional: false
+          - name: SLACK_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: pdsync
+                key: slack-token
+                optional: false
+        args:
+          - --schedule-names
+          - <primary schedule name>
+          - --schedule-names
+          - <secondary schedule name>
+          - --channel-name
+          - <channel name>
+          - --template-file
+          - /config/template.txt
+          - --daemon
+          - --dry-run
+        volumeMounts:
+          - name: pdsync
+            mountPath: /config
+            readOnly: true
+      volumes:
+        - name: pdsync
+          configMap:
+            name: pdsync-config
