@@ -3,5 +3,14 @@ kind: ConfigMap
 metadata:
   name: pdsync-config
 data:
-  template.txt: |
-    primary on-call: <@{{.TeamPrimary}}> secondary on-call: <@{{.TeamSecondary}}>
+  config.yaml: |
+    slackSyncs:
+    - name: team-awesome
+      schedules:
+      - name: Awesome-Primary
+      - id: D34DB33F
+      channel:
+        name: awesome
+      template: |-
+        primary on-call: <@{{.AwesomePrimary}}> secondary on-call: <@{{.AwesomeSecondary}}>
+      dryRun: false

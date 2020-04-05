@@ -34,14 +34,8 @@ spec:
                 key: slack-token
                 optional: false
         args:
-          - --schedule-names
-          - <primary schedule name>
-          - --schedule-names
-          - <secondary schedule name>
-          - --channel-name
-          - <channel name>
-          - --template-file
-          - /config/template.txt
+          - --config
+          - /config/config.yaml
           - --daemon
           - --dry-run
         volumeMounts:
