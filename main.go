@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"regexp"
 	"sync"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -23,7 +21,10 @@ var (
 )
 
 func main() {
-	var p params
+	var (
+		p      params
+		dryRun bool
+	)
 	app := &cli.App{
 		Name:  "pdsync",
 		Usage: "sync PagerDuty on-call schedules to Slack",
@@ -53,6 +54,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Destination: &slToken,
 				EnvVars:     []string{"SLACK_TOKEN"},
 				Required:    true,
+			},
+			&cli.StringFlag{
+				Name:        "config",
+				Usage:       "config file to use",
+				Destination: &p.config,
 			},
 			&cli.StringSliceFlag{
 				Name:  "schedule-names",
@@ -96,12 +102,15 @@ By default, the program will terminate after a single run. Use the --daemon flag
 			&cli.BoolFlag{
 				Name:        "dry-run",
 				Usage:       "do not update topic",
-				Destination: &p.dryRun,
+				Destination: &dryRun,
 			},
 		},
 		Action: func(c *cli.Context) error {
 			p.scheduleNames = c.StringSlice("schedule-names")
 			p.scheduleIDs = c.StringSlice("schedule-ids")
+			if c.IsSet("dry-run") {
+				p.dryRun = &dryRun
+			}
 			return realMain(p)
 		},
 	}
@@ -115,24 +124,9 @@ By default, the program will terminate after a single run. Use the --daemon flag
 }
 
 func realMain(p params) error {
-	if len(p.scheduleNames) == 0 && len(p.scheduleIDs) == 0 {
-		return fmt.Errorf("one of --schedule-names or --schedule-ids must be provided")
-	}
-
-	if p.channelName == "" && p.channelID == "" {
-		return fmt.Errorf("one of --channel-name or --channel-id must be provided")
-	}
-
-	if p.tmplString == "" && p.tmplFile == "" {
-		return fmt.Errorf("one of --template or --template-file must be provided")
-	}
-
-	if p.tmplFile != "" {
-		b, err := ioutil.ReadFile(p.tmplFile)
-		if err != nil {
-			return err
-		}
-		p.tmplString = string(b)
+	cfg, err := generateConfig(p)
+	if err != nil {
+		return err
 	}
 
 	if p.daemonUpdateFrequency < minDaemonUpdateFrequency {
@@ -142,40 +136,26 @@ func realMain(p params) error {
 	sp := syncerParams{
 		pdClient: newPagerDutyClient(pdToken),
 		slClient: newSlackClient(slToken),
-		dryRun:   p.dryRun,
 	}
-	var err error
-	sp.tmpl, err = template.New("topic").Parse(p.tmplString)
+
+	ctx := context.Background()
+
+	fmt.Println("Getting Slack users")
+	sp.slackUsers, err = sp.slClient.getSlackUsers(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to parse template %q: %s", p.tmplString, err)
+		return fmt.Errorf("failed to get Slack users: %s", err)
+	}
+	fmt.Printf("Found %d Slack user(s)\n", len(sp.slackUsers))
+
+	slSyncs, err := sp.createSlackSyncs(context.TODO(), cfg)
+	if err != nil {
+		return err
 	}
 
 	syncer := newSyncer(sp)
 
-	ctx := context.Background()
-
-	slChannel, err := sp.slClient.getChannel(ctx, p.channelName, p.channelID)
-	if err != nil {
-		return fmt.Errorf("failed to get Slack channel: %s", err)
-	}
-	fmt.Printf("Found channel %q (ID %s)\n", slChannel.Name, slChannel.ID)
-
-	fmt.Println("Getting Slack users")
-	slUsers, err := sp.slClient.getSlackUsers(ctx)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Found %d user(s)\n", len(slUsers))
-
-	fmt.Println("Getting PagerDuty schedules")
-	pdSchedules, err := sp.pdClient.getSchedules(p.scheduleIDs, p.scheduleNames)
-	if err != nil {
-		return fmt.Errorf("failed to get PagerDuty schedules: %s", err)
-	}
-	fmt.Printf("Found %d PagerDuty schedule(s)\n", len(pdSchedules))
-
 	runFunc := func() error {
-		return syncer.Run(ctx, pdSchedules, slChannel, slUsers)
+		return syncer.Run(ctx, slSyncs)
 	}
 	if !p.daemon {
 		return runFunc()

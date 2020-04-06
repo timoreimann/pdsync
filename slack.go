@@ -128,8 +128,8 @@ Loop:
 	return slChannel, nil
 }
 
-func (cl *slackClient) ensureTopic(ctx context.Context, channel *slack.Channel, topic string, dryRun bool) error {
-	channel, err := cl.getChannelByID(ctx, channel.ID)
+func (cl *slackClient) ensureTopic(ctx context.Context, channelID string, topic string, dryRun bool) error {
+	channel, err := cl.getChannelByID(ctx, channelID)
 	if err != nil {
 		return err
 	}

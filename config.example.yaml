@@ -1,0 +1,21 @@
+slackSyncs:
+    # name must be unique across all given syncs
+  - name: team-awesome
+    schedules:
+      # a schedule can be given by name...
+    - name: Awesome-Primary
+      # ...or by ID
+    - id: D34DB33F
+    channel:
+      name: awesome
+      # a channel can also be provided by ID:
+      # id: 1A3F8FGJ
+
+      # The on-call Slack user variables are named after the schedule names.
+      # Note how it is called ".AwesomePrimary" and not ".Awesome-Primary" because Go
+      # template variables support alphanumeric characters only, so pdsync
+      # strips off all illegal characters.
+    template: |-
+      primary on-call: <@{{.AwesomePrimary}}> secondary on-call: <@{{.AwesomeSecondary}}>
+    # Set to true to skip updating the Slack channel topic
+    dryRun: false

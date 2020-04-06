@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PagerDuty/go-pagerduty"
@@ -37,6 +39,8 @@ func pagerDutyUserString(user pagerduty.User) string {
 
 type pagerDutyClient struct {
 	*pagerduty.Client
+	pdSchedulesByNameOnce sync.Once
+	pdSchedulesByName     map[string]pdSchedule
 }
 
 func newPagerDutyClient(token string) *pagerDutyClient {
@@ -45,61 +49,76 @@ func newPagerDutyClient(token string) *pagerDutyClient {
 	}
 }
 
-func (cl *pagerDutyClient) getSchedules(ids, names []string) (pdSchedules, error) {
-	pdSchedules, err := cl.getSchedulesByID(ids)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get schedules by ID: %s", err)
+func (cl *pagerDutyClient) getSchedule(id, name string) (*pdSchedule, error) {
+	if id != "" {
+		schedule, err := cl.getScheduleByID(id)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get schedule by ID: %s", err)
+		}
+		return schedule, nil
 	}
 
-	schedsByName, err := cl.getSchedulesByName(names)
+	schedule, err := cl.getScheduleByName(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schedules by name: %s", err)
 	}
 
-	for _, schedByName := range schedsByName {
-		pdSchedules.ensureSchedule(schedByName)
-	}
-
-	return pdSchedules, nil
+	return schedule, nil
 }
 
-func (cl *pagerDutyClient) getSchedulesByID(scheduleIDs []string) (pdSchedules, error) {
-	var pdSchedules pdSchedules
-	for _, scheduleID := range scheduleIDs {
-		fmt.Printf("Looking up schedule by ID %s\n", scheduleID)
-		var schedule *pagerduty.Schedule
-		rErr := retryOnPagerDutyRateLimit(func() error {
-			var err error
-			schedule, err = cl.GetSchedule(scheduleID, pagerduty.GetScheduleOptions{})
-			return err
-		})
-		if rErr != nil {
-			return nil, rErr
-		}
-
-		if schedule == nil {
-			return nil, fmt.Errorf("schedule by ID %s not found", scheduleID)
-		}
-
-		pdSchedules = append(pdSchedules, pdSchedule{
-			id:   schedule.ID,
-			name: schedule.Name,
-		})
+func (cl *pagerDutyClient) getScheduleByID(scheduleID string) (*pdSchedule, error) {
+	if scheduleID == "" {
+		return nil, errors.New("schedule ID is missing")
 	}
 
-	return pdSchedules, nil
-}
+	fmt.Printf("Looking up schedule by ID %s\n", scheduleID)
+	var schedule *pagerduty.Schedule
+	rErr := retryOnPagerDutyRateLimit(func() error {
+		var err error
+		schedule, err = cl.GetSchedule(scheduleID, pagerduty.GetScheduleOptions{})
+		return err
+	})
+	if rErr != nil {
+		return nil, rErr
+	}
 
-func (cl *pagerDutyClient) getSchedulesByName(scheduleNames []string) (pdSchedules, error) {
-	if len(scheduleNames) == 0 {
+	if schedule == nil {
 		return nil, nil
 	}
 
-	var pdSchedules pdSchedules
+	return &pdSchedule{
+		id:   schedule.ID,
+		name: schedule.Name,
+	}, nil
+}
+
+func (cl *pagerDutyClient) getScheduleByName(scheduleName string) (*pdSchedule, error) {
+	if scheduleName == "" {
+		return nil, errors.New("schedule name is missing")
+	}
+
+	var err error
+	cl.pdSchedulesByNameOnce.Do(func() {
+		cl.pdSchedulesByName, err = cl.getAllSchedulesByName()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all schedules by name: %s", err)
+	}
+
+	pdSchedule, ok := cl.pdSchedulesByName[scheduleName]
+	if !ok {
+		return nil, nil
+	}
+
+	return &pdSchedule, nil
+}
+
+func (cl *pagerDutyClient) getAllSchedulesByName() (map[string]pdSchedule, error) {
+	pdSchedules := map[string]pdSchedule{}
 	alo := pagerduty.APIListObject{
 		Limit: 100,
 	}
-	fmt.Printf("Looking up schedules %q by name\n", scheduleNames)
+	fmt.Println("Collecting schedules")
 	for {
 		fmt.Println("Loading PagerDuty schedules page")
 		var schedulesResp *pagerduty.ListSchedulesResponse
@@ -113,34 +132,16 @@ func (cl *pagerDutyClient) getSchedulesByName(scheduleNames []string) (pdSchedul
 		}
 
 		for _, schedule := range schedulesResp.Schedules {
-			if !isRelevantSchedule(schedule.Name, scheduleNames) {
-				continue
-			}
-
-			pdSchedules = append(pdSchedules, pdSchedule{
+			pdSchedules[schedule.Name] = pdSchedule{
 				id:   schedule.ID,
 				name: schedule.Name,
-			})
+			}
 		}
 
 		if !schedulesResp.APIListObject.More {
 			break
 		}
 		alo.Offset = alo.Offset + alo.Limit
-	}
-
-	var missingNames []string
-Loop:
-	for _, scheduleName := range scheduleNames {
-		for _, pdSchedule := range pdSchedules {
-			if scheduleName == pdSchedule.name {
-				continue Loop
-			}
-		}
-		missingNames = append(missingNames, scheduleName)
-	}
-	if len(missingNames) > 0 {
-		return nil, fmt.Errorf("failed to look up the following schedule(s) by name: %s", missingNames)
 	}
 
 	return pdSchedules, nil
@@ -169,15 +170,6 @@ func (cl *pagerDutyClient) getOnCallUsersBySchedule(pdSchedules pdSchedules) (ma
 	}
 
 	return onCallUserBySchedule, nil
-}
-
-func isRelevantSchedule(s string, schedules []string) bool {
-	for _, schedule := range schedules {
-		if schedule == s {
-			return true
-		}
-	}
-	return false
 }
 
 func retryOnPagerDutyRateLimit(f func() error) error {

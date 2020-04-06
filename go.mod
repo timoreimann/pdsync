@@ -8,4 +8,5 @@ require (
 	github.com/matryer/try v0.0.0-20161228173917-9ac251b645a2
 	github.com/slack-go/slack v0.6.3
 	github.com/urfave/cli/v2 v2.1.1
+	gopkg.in/yaml.v2 v2.2.8
 )
