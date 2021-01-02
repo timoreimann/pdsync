@@ -16,7 +16,7 @@ type pdSchedules []pdSchedule
 
 func (schedules *pdSchedules) ensureSchedule(schedule pdSchedule) {
 	for _, sched := range *schedules {
-		if sched == schedule {
+		if sched.id == schedule.id {
 			return
 		}
 	}
@@ -26,11 +26,11 @@ func (schedules *pdSchedules) ensureSchedule(schedule pdSchedule) {
 type pdSchedule struct {
 	id   string
 	name string
+	userGroups UserGroups
 }
 
-type pdUser struct {
-	name  string
-	email string
+func (ps pdSchedule) String() string {
+	return fmt.Sprintf("{ID:%s Name:%q}", ps.id, ps.name)
 }
 
 func pagerDutyUserString(user pagerduty.User) string {
@@ -147,29 +147,25 @@ func (cl *pagerDutyClient) getAllSchedulesByName() (map[string]pdSchedule, error
 	return pdSchedules, nil
 }
 
-func (cl *pagerDutyClient) getOnCallUsersBySchedule(pdSchedules pdSchedules) (map[pdSchedule]pagerduty.User, error) {
-	onCallUserBySchedule := map[pdSchedule]pagerduty.User{}
+func (cl *pagerDutyClient) getOnCallUser(schedule pdSchedule) (pagerduty.User, error) {
 	now := time.Now()
-	for _, schedule := range pdSchedules {
-		fmt.Printf("Getting on-call users for schedule %#v\n", schedule)
-		onCallUsers, err := cl.ListOnCallUsers(schedule.id, pagerduty.ListOnCallUsersOptions{
-			Since: now.Add(-1 * time.Second).Format(time.RFC3339),
-			Until: now.Format(time.RFC3339),
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		if len(onCallUsers) != 1 {
-			return nil, fmt.Errorf("unexpected number of on-call users: %d", len(onCallUsers))
-		}
-
-		onCallUser := onCallUsers[0]
-		fmt.Printf("Got on-call user %q (ID %s) for schedule %#v\n", onCallUser.Name, onCallUser.ID, schedule)
-		onCallUserBySchedule[schedule] = onCallUser
+	fmt.Printf("Getting on-call users for schedule %s\n", schedule)
+	onCallUsers, err := cl.ListOnCallUsers(schedule.id, pagerduty.ListOnCallUsersOptions{
+		Since: now.Add(-1 * time.Second).Format(time.RFC3339),
+		Until: now.Format(time.RFC3339),
+	})
+	if err != nil {
+		return pagerduty.User{}, err
 	}
 
-	return onCallUserBySchedule, nil
+	if len(onCallUsers) != 1 {
+		return pagerduty.User{}, fmt.Errorf("unexpected number of on-call users: %d", len(onCallUsers))
+	}
+
+	onCallUser := onCallUsers[0]
+	fmt.Printf("Got on-call user %q (ID %s) for schedule %s\n", onCallUser.Name, onCallUser.ID, schedule)
+
+	return onCallUser, nil
 }
 
 func retryOnPagerDutyRateLimit(f func() error) error {

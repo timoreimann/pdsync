@@ -1,11 +1,20 @@
 slackSyncs:
-    # name must be unique across all given syncs
+  # name must be unique across all given syncs
   - name: team-awesome
     schedules:
-      # a schedule can be given by name...
-    - name: Awesome-Primary
-      # ...or by ID
-    - id: D34DB33F
+      # a schedule can be given by name
+      - name: Awesome-Primary
+        # a schedule may optionally have one or more user groups that get updated with the on-call personnel
+        userGroups:
+          # choose one of `id`, `name`, or `handle` to reference a pre-existing user group
+          - name: Team Awesome On-call (all)
+          - handle: team-awesome-on-call-primary
+        # alternatively, the schedule can be given by ID (the name is assumed to be Awesome-Secondary and referenced in the template below)
+      - id: D34DB33F
+        userGroups:
+          # the first user group is also defined in the primary schedule above
+          - name: Team Awesome On-call (all)
+          - handle: team-awesome-on-call-secondary
     channel:
       name: awesome
       # a channel can also be provided by ID:
@@ -16,6 +25,9 @@ slackSyncs:
       # template variables support alphanumeric characters only, so pdsync
       # strips off all illegal characters.
     template: |-
-      primary on-call: <@{{.AwesomePrimary}}> secondary on-call: <@{{.AwesomeSecondary}}>
+      primary on-call: <@{{.AwesomePrimary}}> (Slack handle: @team-awesome-on-call-primary)
+      secondary on-call: <@{{.AwesomeSecondary}}> (Slack handle: @team-awesome-on-call-secondary)
+
+      reach out to both primary and secondary via @team-awesome-on-call
     # Set to true to skip updating the Slack channel topic
     dryRun: false
