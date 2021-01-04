@@ -48,15 +48,11 @@ func newSlackClient(token string) *slackClient {
 }
 
 func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
-	var apiUsers []slack.User
-	// TODO: don't need retryOnSlackRateLimit since GetUsersContext does it already.
-	rErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
-		var err error
-		apiUsers, err = cl.GetUsersContext(ctx)
-		return err
-	})
-	if rErr != nil {
-		return nil, rErr
+	// GetUsersContext does retrying on rate-limit errors, so no need to wrap it
+	// around retryOnSlackRateLimit.
+	apiUsers, err := cl.GetUsersContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	slUsers := make(slackUsers, 0, len(apiUsers))
