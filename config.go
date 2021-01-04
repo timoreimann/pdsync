@@ -145,12 +145,6 @@ func singleSlackSync(p params) (config, error) {
 		}
 		slackSync.Schedules = append(slackSync.Schedules, cfgSchedule)
 	}
-	for _, scheduleID := range p.scheduleIDs {
-		slackSync.Schedules = append(slackSync.Schedules, ConfigSchedule{ID: scheduleID})
-	}
-	for _, scheduleName := range p.scheduleNames {
-		slackSync.Schedules = append(slackSync.Schedules, ConfigSchedule{Name: scheduleName})
-	}
 
 	return config{
 		SlackSyncs: []ConfigSlackSync{slackSync},

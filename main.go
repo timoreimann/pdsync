@@ -66,14 +66,6 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Name:  "schedule",
 				Usage: "name of a PageDuty schedule to sync periodically (can be repeated to define several schedules); syntax: id|name=<schedule reference>[;userGroup=id|name|handle=<user group reference>..]",
 			},
-			&cli.StringSliceFlag{
-				Name:  "schedule-names",
-				Usage: "names of PageDuty schedules to sync periodically (DEPRECATED: use \"schedule\" instead)",
-			},
-			&cli.StringSliceFlag{
-				Name:  "schedule-ids",
-				Usage: "IDs of PageDuty schedules to sync periodically (DEPRECATED: use \"schedule\" instead)",
-			},
 			&cli.StringFlag{
 				Name:        "channel-name",
 				Usage:       "the name of the channel to post topic updates to",
@@ -113,8 +105,6 @@ By default, the program will terminate after a single run. Use the --daemon flag
 		},
 		Action: func(c *cli.Context) error {
 			p.schedules = c.StringSlice("schedule")
-			p.scheduleNames = c.StringSlice("schedule-names")
-			p.scheduleIDs = c.StringSlice("schedule-ids")
 			if c.IsSet("dry-run") {
 				p.dryRun = &dryRun
 			}

@@ -5,8 +5,6 @@ import "time"
 type params struct {
 	config                string
 	schedules             []string
-	scheduleNames         []string
-	scheduleIDs           []string
 	channelName           string
 	channelID             string
 	tmplString            string
