@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/matryer/try"
 
 	"github.com/PagerDuty/go-pagerduty"
@@ -47,6 +49,7 @@ func newSlackClient(token string) *slackClient {
 
 func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
 	var apiUsers []slack.User
+	// TODO: don't need retryOnSlackRateLimit since GetUsersContext does it already.
 	rErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
 		var err error
 		apiUsers, err = cl.GetUsersContext(ctx)
@@ -128,7 +131,89 @@ Loop:
 	return slChannel, nil
 }
 
-func (cl *slackClient) ensureTopic(ctx context.Context, channelID string, topic string, dryRun bool) error {
+func (cl *slackClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
+	var groups []slack.UserGroup
+	retErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
+		var err error
+		groups, err = cl.GetUserGroupsContext(ctx, []slack.GetUserGroupsOption(nil)...)
+		return err
+	})
+	if retErr != nil {
+		return nil, retErr
+	}
+
+	userGroups := make([]UserGroup, 0, len(groups))
+	for _, group := range groups {
+		userGroups = append(userGroups, UserGroup{
+			ID: group.ID,
+			Name: group.Name,
+			Handle: group.Handle,
+		})
+	}
+
+	return userGroups, nil
+}
+
+type oncallGroups []*oncallGroup
+
+func (ocgs *oncallGroups) getOrCreate(ug UserGroup) *oncallGroup {
+	for _, ocg := range *ocgs {
+		if ocg.userGroupID == ug.ID {
+			return ocg
+		}
+	}
+
+	ocg := &oncallGroup{
+		userGroupID: ug.ID,
+		userGroupName: ug.Name,
+	}
+	*ocgs = append(*ocgs, ocg)
+	return ocg
+}
+
+type oncallGroup struct {
+	userGroupID string
+	userGroupName string
+	members []string
+}
+
+func (ocg *oncallGroup) ensureMember(m string) {
+	for _, memb := range ocg.members {
+		if memb == m {
+			return
+		}
+	}
+	ocg.members = append(ocg.members, m)
+}
+
+func (cl *slackClient) updateOncallGroupMembers(ctx context.Context, oncallGroups oncallGroups, dryRun bool) error {
+	for _, group := range oncallGroups {
+		currentMembers, err := cl.GetUserGroupMembersContext(ctx, group.userGroupID)
+		if err != nil {
+			return fmt.Errorf("failed to get user group members for %q: %s", group.userGroupName, err)
+		}
+		if cmp.Equal(currentMembers, group.members, cmpopts.SortSlices(func(x, y string) bool {
+			return x < y
+		})) {
+			fmt.Printf("User group %q already has the right members\n", group.userGroupName)
+			continue
+		}
+		concatMembers := strings.Join(group.members, ",")
+		if dryRun {
+			fmt.Printf("[DRY RUN] Not updating user group %s with member(s): %s\n", group.userGroupName, concatMembers)
+			continue
+		}
+		_, err = cl.UpdateUserGroupMembersContext(ctx, group.userGroupID, concatMembers)
+		if err != nil {
+			return fmt.Errorf("failed to update user group members for %q: %s", group.userGroupName, err)
+		}
+		fmt.Printf("Updated user group %s with member(s): %s\n", group.userGroupName, concatMembers)
+	}
+
+	return nil
+}
+
+func (cl *slackClient) updateTopic(ctx context.Context, channelID string, topic string, dryRun bool) error {
 	channel, err := cl.getChannelByID(ctx, channelID)
 	if err != nil {
 		return err
@@ -139,7 +224,7 @@ func (cl *slackClient) ensureTopic(ctx context.Context, channelID string, topic 
 	} else {
 		fmt.Printf("Updating topic from\n[BEGIN-OF-OLD]\n%s\n[END-OF-OLD]\nto:\n[BEGIN-OF-NEW]\n%s\n[END-OF-NEW]\n", channel.Topic.Value, topic)
 		if dryRun {
-			fmt.Println("[DRY RUN] Not updating")
+			fmt.Println("[DRY RUN] Not updating topic")
 			return nil
 		}
 		_, err := cl.SetTopicOfConversationContext(ctx, channel.ID, topic)
@@ -167,7 +252,8 @@ func retryOnSlackRateLimit(ctx context.Context, f func(ctx context.Context) erro
 		if err != nil {
 			var rle *slack.RateLimitedError
 			if errors.As(err, &rle) {
-				sleep := rle.RetryAfter * time.Nanosecond
+				sleep := rle.RetryAfter
+				//sleep := rle.RetryAfter * time.Nanosecond
 				fmt.Printf("Slack rate limit hit -- waiting %s\n", sleep)
 				time.Sleep(sleep)
 				return true, err

@@ -1,16 +1,61 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 )
 
 // ConfigSchedule represents a PagerDuty schedule identified by either ID or name.
 type ConfigSchedule struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
+	ID         string     `yaml:"id"`
+	Name       string     `yaml:"name"`
+	UserGroups UserGroups `yaml:"userGroups"`
+}
+
+func (cs ConfigSchedule) String() string {
+	return fmt.Sprintf("{ID:%s Name:%q}", cs.ID, cs.Name)
+}
+
+type UserGroups []UserGroup
+
+func (ugs UserGroups) find(ug2 UserGroup) *UserGroup {
+	for _, ug := range ugs {
+		if (ug2.ID != "" && ug.ID == ug2.ID) ||
+			(ug2.Name != "" && ug.Name == ug2.Name) ||
+			(ug2.Handle != "" && ug.Handle == ug2.Handle) {
+			return &ug
+		}
+	}
+	return nil
+}
+
+func (ugs *UserGroups) getOrCreate(ug2 UserGroup) *UserGroup {
+	if ugs == nil {
+
+	}
+
+	for _, ug := range *ugs {
+		if (ug2.ID != "" && ug.ID == ug2.ID) ||
+			(ug2.Name != "" && ug.Name == ug2.Name) ||
+			(ug2.Handle != "" && ug.Handle == ug2.Handle) {
+			return &ug
+		}
+	}
+	return nil
+}
+
+type UserGroup struct {
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	Handle string `yaml:"handle"`
+}
+
+func (ug UserGroup) String() string {
+	return fmt.Sprintf("{ID:%s Name:%q Handle:%s}", ug.ID, ug.Name, ug.Handle)
 }
 
 // ConfigChannel represents a Slack channel identified by either ID or name.
@@ -51,7 +96,10 @@ func generateConfig(p params) (config, error) {
 			}
 			p.tmplString = string(b)
 		}
-		cfg = singleSlackSync(p)
+		cfg, err = singleSlackSync(p)
+		if err != nil {
+			return config{}, err
+		}
 	}
 
 	// If specified, let the global dry-run parameter override per-sync dry-run
@@ -81,7 +129,7 @@ func readConfigFile(file string) (config, error) {
 	return cfg, err
 }
 
-func singleSlackSync(p params) config {
+func singleSlackSync(p params) (config, error) {
 	slackSync := ConfigSlackSync{
 		Name: "default",
 		Channel: ConfigChannel{
@@ -89,6 +137,13 @@ func singleSlackSync(p params) config {
 			Name: p.channelName,
 		},
 		Template: p.tmplString,
+	}
+	for _, schedule := range p.schedules {
+		cfgSchedule, err := parseSchedule(schedule)
+		if err != nil {
+			return config{}, err
+		}
+		slackSync.Schedules = append(slackSync.Schedules, cfgSchedule)
 	}
 	for _, scheduleID := range p.scheduleIDs {
 		slackSync.Schedules = append(slackSync.Schedules, ConfigSchedule{ID: scheduleID})
@@ -99,7 +154,79 @@ func singleSlackSync(p params) config {
 
 	return config{
 		SlackSyncs: []ConfigSlackSync{slackSync},
+	}, nil
+}
+
+func parseSchedule(schedule string) (ConfigSchedule, error) {
+	kvs := map[string][]string{}
+	for _, elem := range strings.Split(schedule, ";") {
+		kv := strings.SplitN(elem, "=", 2)
+		if len(kv) < 2 {
+			return ConfigSchedule{}, fmt.Errorf("missing separator on element %q", elem)
+		}
+		key := kv[0]
+		value := kv[1]
+		kvs[key] = append(kvs[key], value)
 	}
+
+	var id string
+	if ids := kvs["id"]; len(ids) > 0 {
+		if len(ids) > 1 {
+			return ConfigSchedule{}, errors.New(`multiple values for key "id" not allowed`)
+		}
+		id = ids[0]
+		delete(kvs, "id")
+	}
+	var name string
+	if names := kvs["name"]; len(names) > 0 {
+		if len(names) > 1 {
+			return ConfigSchedule{}, errors.New(`multiple values for key "name" not allowed`)
+		}
+		name = names[0]
+		delete(kvs, "name")
+	}
+
+	if id == "" && name == "" {
+			return ConfigSchedule{}, errors.New(`one of "id" or "name" must be given`)
+	}
+
+	if id != "" && name != "" {
+		return ConfigSchedule{}, errors.New(`"id" and "name" cannot be specified simultaneously`)
+	}
+
+	cfgSchedule := ConfigSchedule{
+		ID: id,
+		Name: name,
+	}
+
+	for _, userGroup := range kvs["userGroup"] {
+		kv := strings.Split(userGroup, "=")
+		if len(kv) != 2 {
+			return ConfigSchedule{}, fmt.Errorf("user group %s does not follow key=value pattern", userGroup)
+		}
+		ugKey := kv[0]
+		ugValue := kv[1]
+
+		var ug UserGroup
+		switch ugKey {
+		case "id":
+			ug.ID = ugValue
+		case "name":
+			ug.Name = ugValue
+		case "handle":
+			ug.Handle = ugValue
+		default:
+			return ConfigSchedule{}, fmt.Errorf("user group %s has unexpected key %q", userGroup, ugKey)
+		}
+		cfgSchedule.UserGroups = append(cfgSchedule.UserGroups, ug)
+	}
+	delete(kvs, "userGroup")
+
+	if len(kvs) > 0 {
+		return ConfigSchedule{}, fmt.Errorf("unsupported key/value pairs left: %s", kvs)
+	}
+
+	return cfgSchedule, nil
 }
 
 func validateConfig(cfg *config) error {
@@ -113,6 +240,11 @@ func validateConfig(cfg *config) error {
 		for _, cfgSchedule := range sync.Schedules {
 			if cfgSchedule.ID == "" && cfgSchedule.Name == "" {
 				return fmt.Errorf("slack sync %q invalid: must specify either schedule ID or schedule name", sync.Name)
+			}
+			for _, cfgUserGroup := range cfgSchedule.UserGroups {
+				if cfgUserGroup.ID == "" && cfgUserGroup.Name == "" && cfgUserGroup.Handle == "" {
+					return fmt.Errorf("slack sync %q user group %s invalid: must specify either user group ID or user group name or user group handle", sync.Name, cfgUserGroup)
+				}
 			}
 		}
 

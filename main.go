@@ -32,10 +32,12 @@ func main() {
 
 Schedules can be given as names or IDs. Similarly, the channel to update the topic for can be specified by name or ID.
 
+Optionally, a set of Slack user groups can be kept in sync. This can be used to manage on-call handles.
+
 By default, the program will terminate after a single run. Use the --daemon flag to keep running in the background and synchronize schedule changes periodically.
 `,
 		Authors: []*cli.Author{
-			&cli.Author{
+			{
 				Name:  "Timo Reimann",
 				Email: "ttr314@googlemail.com",
 			},
@@ -61,12 +63,16 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Destination: &p.config,
 			},
 			&cli.StringSliceFlag{
+				Name:  "schedule",
+				Usage: "name of a PageDuty schedule to sync periodically (can be repeated to define several schedules); syntax: id|name=<schedule reference>[;userGroup=id|name|handle=<user group reference>..]",
+			},
+			&cli.StringSliceFlag{
 				Name:  "schedule-names",
-				Usage: "names of PageDuty schedules to sync periodically",
+				Usage: "names of PageDuty schedules to sync periodically (DEPRECATED: use \"schedule\" instead)",
 			},
 			&cli.StringSliceFlag{
 				Name:  "schedule-ids",
-				Usage: "IDs of PageDuty schedules to sync periodically",
+				Usage: "IDs of PageDuty schedules to sync periodically (DEPRECATED: use \"schedule\" instead)",
 			},
 			&cli.StringFlag{
 				Name:        "channel-name",
@@ -106,6 +112,7 @@ By default, the program will terminate after a single run. Use the --daemon flag
 			},
 		},
 		Action: func(c *cli.Context) error {
+			p.schedules = c.StringSlice("schedule")
 			p.scheduleNames = c.StringSlice("schedule-names")
 			p.scheduleIDs = c.StringSlice("schedule-ids")
 			if c.IsSet("dry-run") {
@@ -146,6 +153,13 @@ func realMain(p params) error {
 		return fmt.Errorf("failed to get Slack users: %s", err)
 	}
 	fmt.Printf("Found %d Slack user(s)\n", len(sp.slackUsers))
+
+	fmt.Println("Getting Slack user groups")
+	sp.slackUserGroups, err = sp.slClient.getUserGroups(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get Slack user groups: %s", err)
+	}
+	fmt.Printf("Found %d Slack user group(s)\n", len(sp.slackUserGroups))
 
 	slSyncs, err := sp.createSlackSyncs(context.TODO(), cfg)
 	if err != nil {
