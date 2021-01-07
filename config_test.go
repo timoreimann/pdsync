@@ -30,11 +30,6 @@ func TestParseSchedule(t *testing.T) {
 			wantErrStr: `multiple values for key "name" not allowed`,
 		},
 		{
-			name:       "none of id or name specifiers given",
-			inSchedule: "foo=bar",
-			wantErrStr: `one of "id" or "name" must be given`,
-		},
-		{
 			name:       "id and name specifiers given",
 			inSchedule: "id=schedule;name=schedule",
 			wantErrStr: `"id" and "name" cannot be specified simultaneously`,

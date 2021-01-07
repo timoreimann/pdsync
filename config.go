@@ -180,10 +180,6 @@ func parseSchedule(schedule string) (ConfigSchedule, error) {
 		delete(kvs, "name")
 	}
 
-	if id == "" && name == "" {
-			return ConfigSchedule{}, errors.New(`one of "id" or "name" must be given`)
-	}
-
 	if id != "" && name != "" {
 		return ConfigSchedule{}, errors.New(`"id" and "name" cannot be specified simultaneously`)
 	}
@@ -242,12 +238,13 @@ func validateConfig(cfg *config) error {
 			}
 		}
 
-		if sync.Channel.ID == "" && sync.Channel.Name == "" {
-			return fmt.Errorf("slack sync %q invalid: must specify either channel ID or channel name", sync.Name)
-		}
-
-		if sync.Template == "" {
-			return fmt.Errorf("slack sync %q invalid: template is missing", sync.Name)
+		channelGiven := sync.Channel.ID != "" || sync.Channel.Name != ""
+		if sync.Template != "" {
+			if !channelGiven {
+				return fmt.Errorf("slack sync %q invalid: must specify either channel ID or channel name when topic is given", sync.Name)
+			}
+		} else if channelGiven {
+			return fmt.Errorf("slack sync %q invalid: must specify template when either channel ID or channel name is given", sync.Name)
 		}
 	}
 
