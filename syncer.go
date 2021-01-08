@@ -25,6 +25,14 @@ type syncerParams struct {
 
 func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runSlackSync, error) {
 	var slSyncs []runSlackSync
+
+	fmt.Println("Getting Slack channels")
+	slChannels, err := sp.slClient.getChannels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get channels: %s", err)
+	}
+	fmt.Printf("Got %d Slack channel(s)\n", len(slChannels))
+
 	for _, cfgSlSync := range cfg.SlackSyncs {
 		slSync := runSlackSync{
 			name:   cfgSlSync.Name,
@@ -40,9 +48,10 @@ func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runS
 				return nil, fmt.Errorf("failed to create slack sync %q: failed to parse template %q: %s", slSync.name, cfgSlSync.Template, err)
 			}
 
-			slChannel, err := sp.slClient.getChannel(ctx, cfgSlSync.Channel.Name, cfgSlSync.Channel.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create slack sync %q: failed to get Slack channel: %s", slSync.name, err)
+			cfgChannel := cfgSlSync.Channel
+			slChannel := slChannels.find(cfgChannel.ID, cfgChannel.Name)
+			if slChannel == nil {
+				return nil, fmt.Errorf("failed to create slack sync %q: failed to find configured Slack channel %s", slSync.name, cfgChannel)
 			}
 			slSync.slackChannelID = slChannel.ID
 			fmt.Printf("Slack sync %s: found Slack channel %q (ID %s)\n", slSync.name, slChannel.Name, slChannel.ID)
