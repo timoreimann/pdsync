@@ -37,6 +37,22 @@ type slackUser struct {
 	email    string
 }
 
+type channelList []slack.Channel
+
+func (cl channelList) find(id, name string) *slack.Channel {
+	if id == "" && name == "" {
+		return nil
+	}
+
+	for _, ch := range cl {
+		if ch.ID == id || ch.Name == name {
+			return &ch
+		}
+	}
+
+	return nil
+}
+
 type slackClient struct {
 	*slack.Client
 }
@@ -63,56 +79,33 @@ func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
 	return slUsers, nil
 }
 
-func (cl *slackClient) getChannel(ctx context.Context, name, id string) (*slack.Channel, error) {
+func (cl *slackClient) getChannels(ctx context.Context) (channelList, error) {
 	var (
-		slChannel *slack.Channel
-		err       error
-	)
-	if id != "" {
-		fmt.Printf("Looking up channel by ID %s\n", id)
-		slChannel, err = cl.getChannelByID(ctx, id)
-	} else {
-		fmt.Printf("Looking up channel by name %q\n", name)
-		slChannel, err = cl.getChannelByName(ctx, name)
-	}
-
-	return slChannel, err
-}
-
-func (cl *slackClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
-	return cl.GetConversationInfoContext(ctx, id, false)
-}
-
-func (cl *slackClient) getChannelByName(ctx context.Context, name string) (*slack.Channel, error) {
-	var (
-		slChannel *slack.Channel
-		cursor    string
+		list   channelList
+		cursor string
 	)
 
-Loop:
 	for {
 		var (
-			nextCursor string
 			channels   []slack.Channel
+			nextCursor string
 		)
-		rErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
+		retErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
 			var err error
 			channels, nextCursor, err = cl.GetConversationsContext(ctx, &slack.GetConversationsParameters{
 				Cursor:          cursor,
 				ExcludeArchived: "true",
+				Limit:           200,
 				Types:           []string{"public_channel", "private_channel"},
 			})
 			return err
 		})
-		if rErr != nil {
-			return nil, rErr
+		if retErr != nil {
+			return nil, retErr
 		}
 
 		for _, channel := range channels {
-			if channel.Name == name {
-				slChannel = &channel
-				break Loop
-			}
+			list = append(list, channel)
 		}
 
 		if nextCursor == "" {
@@ -120,11 +113,12 @@ Loop:
 		}
 		cursor = nextCursor
 	}
-	if slChannel == nil {
-		return nil, errors.New("failed to find channel")
-	}
 
-	return slChannel, nil
+	return list, nil
+}
+
+func (cl *slackClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
+	return cl.GetConversationInfoContext(ctx, id, false)
 }
 
 func (cl *slackClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
@@ -141,8 +135,8 @@ func (cl *slackClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
 	userGroups := make([]UserGroup, 0, len(groups))
 	for _, group := range groups {
 		userGroups = append(userGroups, UserGroup{
-			ID: group.ID,
-			Name: group.Name,
+			ID:     group.ID,
+			Name:   group.Name,
 			Handle: group.Handle,
 		})
 	}
@@ -160,7 +154,7 @@ func (ocgs *oncallGroups) getOrCreate(ug UserGroup) *oncallGroup {
 	}
 
 	ocg := &oncallGroup{
-		userGroupID: ug.ID,
+		userGroupID:   ug.ID,
 		userGroupName: ug.Name,
 	}
 	*ocgs = append(*ocgs, ocg)
@@ -168,9 +162,9 @@ func (ocgs *oncallGroups) getOrCreate(ug UserGroup) *oncallGroup {
 }
 
 type oncallGroup struct {
-	userGroupID string
+	userGroupID   string
 	userGroupName string
-	members []string
+	members       []string
 }
 
 func (ocg *oncallGroup) ensureMember(m string) {
@@ -249,7 +243,6 @@ func retryOnSlackRateLimit(ctx context.Context, f func(ctx context.Context) erro
 			var rle *slack.RateLimitedError
 			if errors.As(err, &rle) {
 				sleep := rle.RetryAfter
-				//sleep := rle.RetryAfter * time.Nanosecond
 				fmt.Printf("Slack rate limit hit -- waiting %s\n", sleep)
 				time.Sleep(sleep)
 				return true, err

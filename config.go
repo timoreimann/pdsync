@@ -63,6 +63,10 @@ type ConfigChannel struct {
 	ID   string `yaml:"id"`
 	Name string `yaml:"name"`
 }
+func (cc ConfigChannel) String() string {
+	return fmt.Sprintf("{ID:%s Name:%q}", cc.ID, cc.Name)
+}
+
 
 // ConfigSlackSync represents a synchronization between a set of PagerDuty schedules and a Slack channel.
 type ConfigSlackSync struct {
