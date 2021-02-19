@@ -18,7 +18,7 @@ You will need to create a Slack app with the following scopes
 | `usergroups:read`  | yes      | managing user groups               |
 | `usergroups:write` | yes      | managing user groups               |
 
-and invite it to the target channel.
+and invite it to the target channel. (One easy to do this is to select the app from a channel where it already exists and use the context menu to add it to another channel.)
 
 Next up, one or more _slack syncs_ must be configured, preferrably through a YAML configuration file. Here is an [example file](config.example.yaml):
 
