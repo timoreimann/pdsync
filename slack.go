@@ -64,8 +64,8 @@ func newSlackClient(token string) *slackClient {
 }
 
 func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
-	// GetUsersContext does retrying on rate-limit errors, so no need to wrap it
-	// around retryOnSlackRateLimit.
+	// GetUsersContext retries on rate-limit errors, so no need to wrap it around
+	// retryOnSlackRateLimit.
 	apiUsers, err := cl.GetUsersContext(ctx)
 	if err != nil {
 		return nil, err
@@ -73,6 +73,10 @@ func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
 
 	slUsers := make(slackUsers, 0, len(apiUsers))
 	for _, apiUser := range apiUsers {
+		// Ignore non-human users.
+		if apiUser.Deleted || apiUser.IsBot {
+			continue
+		}
 		slUsers = append(slUsers, createSlackUser(apiUser))
 	}
 
