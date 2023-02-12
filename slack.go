@@ -53,20 +53,20 @@ func (cl channelList) find(id, name string) *slack.Channel {
 	return nil
 }
 
-type slackClient struct {
-	*slack.Client
+type slackMetaClient struct {
+	slackClient *slack.Client
 }
 
-func newSlackClient(token string) *slackClient {
-	return &slackClient{
-		Client: slack.New(token),
+func newSlackMetaClient(token string) *slackMetaClient {
+	return &slackMetaClient{
+		slackClient: slack.New(token),
 	}
 }
 
-func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
+func (metaClient *slackMetaClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
 	// GetUsersContext retries on rate-limit errors, so no need to wrap it around
 	// retryOnSlackRateLimit.
-	apiUsers, err := cl.GetUsersContext(ctx)
+	apiUsers, err := metaClient.slackClient.GetUsersContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (cl *slackClient) getSlackUsers(ctx context.Context) (slackUsers, error) {
 	return slUsers, nil
 }
 
-func (cl *slackClient) getChannels(ctx context.Context) (channelList, error) {
+func (metaClient *slackMetaClient) getChannels(ctx context.Context) (channelList, error) {
 	var (
 		list   channelList
 		cursor string
@@ -96,7 +96,7 @@ func (cl *slackClient) getChannels(ctx context.Context) (channelList, error) {
 		)
 		retErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
 			var err error
-			channels, nextCursor, err = cl.GetConversationsContext(ctx, &slack.GetConversationsParameters{
+			channels, nextCursor, err = metaClient.slackClient.GetConversationsContext(ctx, &slack.GetConversationsParameters{
 				Cursor:          cursor,
 				ExcludeArchived: "true",
 				Limit:           200,
@@ -121,15 +121,15 @@ func (cl *slackClient) getChannels(ctx context.Context) (channelList, error) {
 	return list, nil
 }
 
-func (cl *slackClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
-	return cl.GetConversationInfoContext(ctx, id, false)
+func (metaClient *slackMetaClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
+	return metaClient.slackClient.GetConversationInfoContext(ctx, id, false)
 }
 
-func (cl *slackClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
+func (metaClient *slackMetaClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
 	var groups []slack.UserGroup
 	retErr := retryOnSlackRateLimit(ctx, func(ctx context.Context) error {
 		var err error
-		groups, err = cl.GetUserGroupsContext(ctx, []slack.GetUserGroupsOption(nil)...)
+		groups, err = metaClient.slackClient.GetUserGroupsContext(ctx, []slack.GetUserGroupsOption(nil)...)
 		return err
 	})
 	if retErr != nil {
@@ -180,9 +180,40 @@ func (ocg *oncallGroup) ensureMember(m string) {
 	ocg.members = append(ocg.members, m)
 }
 
-func (cl *slackClient) updateOncallGroupMembers(ctx context.Context, oncallGroups oncallGroups, dryRun bool) error {
+func (metaClient *slackMetaClient) joinChannel(ctx context.Context, channelID string) (joined bool, err error) {
+	_, warn, respWarnings, err := metaClient.slackClient.JoinConversationContext(ctx, channelID)
+	if err != nil {
+		if strings.Contains(err.Error(), "method_not_supported_for_channel_type") {
+			// This likely means it is a private channel that we cannot join.
+			return false, nil
+		}
+		return false, err
+	}
+
+	const alreadyInChannelWarning = "already_in_channel"
+
+	joined = true
+	var warnings []string
+	for _, w := range append([]string{warn}, respWarnings...) {
+		if w != "" {
+			if w == alreadyInChannelWarning {
+				joined = false
+				continue
+			}
+			warnings = append(warnings, warn)
+		}
+	}
+
+	if len(warnings) > 0 {
+		return false, fmt.Errorf("joined channel with warnings: %s", strings.Join(warnings, "; "))
+	}
+
+	return joined, nil
+}
+
+func (metaClient *slackMetaClient) updateOncallGroupMembers(ctx context.Context, oncallGroups oncallGroups, dryRun bool) error {
 	for _, group := range oncallGroups {
-		currentMembers, err := cl.GetUserGroupMembersContext(ctx, group.userGroupID)
+		currentMembers, err := metaClient.slackClient.GetUserGroupMembersContext(ctx, group.userGroupID)
 		if err != nil {
 			return fmt.Errorf("failed to get user group members for %q: %s", group.userGroupName, err)
 		}
@@ -197,7 +228,7 @@ func (cl *slackClient) updateOncallGroupMembers(ctx context.Context, oncallGroup
 			fmt.Printf("[DRY RUN] Not updating user group %s with member(s): %s\n", group.userGroupName, concatMembers)
 			continue
 		}
-		_, err = cl.UpdateUserGroupMembersContext(ctx, group.userGroupID, concatMembers)
+		_, err = metaClient.slackClient.UpdateUserGroupMembersContext(ctx, group.userGroupID, concatMembers)
 		if err != nil {
 			return fmt.Errorf("failed to update user group members for %q: %s", group.userGroupName, err)
 		}
@@ -207,8 +238,8 @@ func (cl *slackClient) updateOncallGroupMembers(ctx context.Context, oncallGroup
 	return nil
 }
 
-func (cl *slackClient) updateTopic(ctx context.Context, channelID string, topic string, dryRun bool) error {
-	channel, err := cl.getChannelByID(ctx, channelID)
+func (metaClient *slackMetaClient) updateTopic(ctx context.Context, channelID string, topic string, dryRun bool) error {
+	channel, err := metaClient.getChannelByID(ctx, channelID)
 	if err != nil {
 		return err
 	}
@@ -221,7 +252,7 @@ func (cl *slackClient) updateTopic(ctx context.Context, channelID string, topic 
 			fmt.Println("[DRY RUN] Not updating topic")
 			return nil
 		}
-		_, err := cl.SetTopicOfConversationContext(ctx, channel.ID, topic)
+		_, err := metaClient.slackClient.SetTopicOfConversationContext(ctx, channel.ID, topic)
 		if err != nil {
 			return err
 		}

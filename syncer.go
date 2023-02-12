@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/template"
 )
 
@@ -17,9 +18,9 @@ type runSlackSync struct {
 }
 
 type syncerParams struct {
-	pdClient   *pagerDutyClient
-	slClient   *slackClient
-	slackUsers slackUsers
+	pdClient        *pagerDutyClient
+	slClient        *slackMetaClient
+	slackUsers      slackUsers
 	slackUserGroups UserGroups
 }
 
@@ -120,6 +121,20 @@ func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync) error {
 }
 
 func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error {
+	if !slackSync.dryRun {
+		joined, err := s.slClient.joinChannel(ctx, slackSync.slackChannelID)
+		if err != nil {
+			if strings.Contains(err.Error(), "missing_scope") {
+				fmt.Printf(`cannot automatically join channel with ID %s because of missing scope "channels:join" -- please add the scope or join pdsync manually`, slackSync.slackChannelID)
+			} else {
+				return fmt.Errorf("failed to join channel with ID %s: %s", slackSync.slackChannelID, err)
+			}
+		}
+		if joined {
+			fmt.Printf("joined channel with ID %s\n", slackSync.slackChannelID)
+		}
+	}
+
 	ocgs := oncallGroups{}
 	slackUserIDByScheduleName := map[string]string{}
 	for _, schedule := range slackSync.pdSchedules {
