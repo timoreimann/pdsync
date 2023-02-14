@@ -132,7 +132,7 @@ func realMain(p params) error {
 
 	sp := syncerParams{
 		pdClient: newPagerDutyClient(pdToken),
-		slClient: newSlackClient(slToken),
+		slClient: newSlackMetaClient(slToken),
 	}
 
 	ctx := context.Background()

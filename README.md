@@ -6,19 +6,20 @@ Right now, the only supported target is Slack: given a list of PageDuty schedule
 
 ## How-to
 
-You will need to create a Slack app with the following scopes
+You will need to create a Slack app with the following scopes:
 
-| Scope              | Optional | Used for                           |
-|--------------------|----------|------------------------------------|
-| `users:read`       | no       |                                    |
-| `channels:read`    | yes      | managing topics (public channels)  |
-| `channels:manage`  | yes      | managing topics (public channels)  |
-| `groups:read`      | yes      | managing topics (private channels) |
-| `groups:write`     | yes      | managing topics (private channels) |
-| `usergroups:read`  | yes      | managing user groups               |
-| `usergroups:write` | yes      | managing user groups               |
+| Scope              | Optional | Used for                              |
+|--------------------|----------|---------------------------------------|
+| `users:read`       | no       |                                       |
+| `channels:join`    | yes      | joining public channels automatically |
+| `channels:read`    | yes      | managing topics (public channels)     |
+| `channels:manage`  | yes      | managing topics (public channels)     |
+| `groups:read`      | yes      | managing topics (private channels)    |
+| `groups:write`     | yes      | managing topics (private channels)    |
+| `usergroups:read`  | yes      | managing user groups                  |
+| `usergroups:write` | yes      | managing user groups                  |
 
-and invite it to the target channel. (One easy to do this is to select the app from a channel where it already exists and use the context menu to add it to another channel.)
+For private channels and when the `channels:join` scope is not assigned, the Slack app needs to be joined to the target channel manually. (One easy to do this is to select the app from a channel where it already exists and use the context menu to add it to another channel.)
 
 Next up, one or more _slack syncs_ must be configured, preferrably through a YAML configuration file. Here is an [example file](config.example.yaml):
 
