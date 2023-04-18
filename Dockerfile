@@ -1,8 +1,10 @@
-FROM golang:alpine as cert-store
-RUN apk --no-cache add ca-certificates
+FROM amd64/golang:1.20.3-alpine3.17 as builder
 
-FROM scratch
+WORKDIR /usr/src/pdsync
 
-COPY --from=cert-store /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY ./pdsync /
+COPY . .
+RUN CGO_ENABLED=0 go build -mod vendor -o /pdsync
+
+FROM gcr.io/distroless/static-debian11 as runner
+COPY --from=builder /pdsync /
 ENTRYPOINT ["/pdsync"]
