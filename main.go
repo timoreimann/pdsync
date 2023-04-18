@@ -18,6 +18,7 @@ var (
 	slToken                  string
 	notAlphaNumRE            = regexp.MustCompile(`[^[:alnum:]]`)
 	minDaemonUpdateFrequency = 1 * time.Minute
+	includePrivateChannels   bool
 )
 
 func main() {
@@ -98,6 +99,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Destination: &p.daemonUpdateFrequency,
 			},
 			&cli.BoolFlag{
+				Name:        "include-private-channels",
+				Usage:       "update topics from rivate channels as well",
+				Destination: &includePrivateChannels,
+			},
+			&cli.BoolFlag{
 				Name:        "dry-run",
 				Usage:       "do not update topic",
 				Destination: &dryRun,
@@ -132,7 +138,7 @@ func realMain(p params) error {
 
 	sp := syncerParams{
 		pdClient: newPagerDutyClient(pdToken),
-		slClient: newSlackMetaClient(slToken),
+		slClient: newSlackMetaClient(slToken, includePrivateChannels),
 	}
 
 	ctx := context.Background()

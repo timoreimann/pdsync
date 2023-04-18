@@ -54,12 +54,19 @@ func (cl channelList) find(id, name string) *slack.Channel {
 }
 
 type slackMetaClient struct {
-	slackClient *slack.Client
+	slackClient  *slack.Client
+	channelTypes []string
 }
 
-func newSlackMetaClient(token string) *slackMetaClient {
+func newSlackMetaClient(token string, includePrivateChannels bool) *slackMetaClient {
+	channelTypes := []string{"public_channel"}
+	if includePrivateChannels {
+		channelTypes = append(channelTypes, "private_channel")
+	}
+
 	return &slackMetaClient{
-		slackClient: slack.New(token),
+		slackClient:  slack.New(token),
+		channelTypes: channelTypes,
 	}
 }
 
@@ -100,7 +107,7 @@ func (metaClient *slackMetaClient) getChannels(ctx context.Context) (channelList
 				Cursor:          cursor,
 				ExcludeArchived: "true",
 				Limit:           200,
-				Types:           []string{"public_channel", "private_channel"},
+				Types:           metaClient.channelTypes,
 			})
 			return err
 		})

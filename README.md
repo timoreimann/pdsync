@@ -21,6 +21,8 @@ You will need to create a Slack app with the following scopes:
 
 For private channels and when the `channels:join` scope is not assigned, the Slack app needs to be joined to the target channel manually. (One easy to do this is to select the app from a channel where it already exists and use the context menu to add it to another channel.)
 
+Support for private channels also needs the `--include-private-channels` flag to be explicitly set.
+
 Next up, one or more _slack syncs_ must be configured, preferrably through a YAML configuration file. Here is an [example file](config.example.yaml):
 
 ```yaml
