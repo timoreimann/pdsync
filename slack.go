@@ -21,15 +21,14 @@ type slackUsers []slackUser
 func (users slackUsers) findByPDUser(pdUser pagerduty.User) *slackUser {
 	// check email match first since it's a distinctive identifier
 	for _, slackUser := range users {
-		if slackUser.email == pdUser.Email { 
+		if slackUser.email == pdUser.Email {
 			return &slackUser
 		}
 	}
 
 	// if we couldn't find an email match, use name. this is the second choice as name is not unique in an organization
 	for _, slackUser := range users {
-		if
-		slackUser.realName == strings.ToLower(pdUser.Name) ||
+		if slackUser.realName == strings.ToLower(pdUser.Name) ||
 			slackUser.name == strings.ToLower(pdUser.Name) {
 			return &slackUser
 		}
