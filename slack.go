@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/PagerDuty/go-pagerduty"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/matryer/try"
-
-	"github.com/PagerDuty/go-pagerduty"
-
 	"github.com/slack-go/slack"
+	"mvdan.cc/xurls/v2"
 )
+
+var rxRelaxed = xurls.Relaxed()
 
 type slackUsers []slackUser
 
@@ -274,6 +276,91 @@ func (metaClient *slackMetaClient) updateTopic(ctx context.Context, channelID st
 	}
 
 	return nil
+}
+
+func escapeText(txt string) (string, error) {
+	obj := slack.NewTextBlockObject("mrkdown", "foobarbar", false, false)
+	block := slack.NewSectionBlock(obj, nil, nil)
+	msg := slack.NewBlockMessage(block)
+	msg.
+
+	remainingTxt := escapeAmpersands(txt)
+
+	for {
+		idxPair := rxRelaxed.FindStringIndex(remainingTxt)
+		if idxPair == nil {
+			break
+		}
+
+		startIdx := idxPair[0]
+		if startIdx > 0 && startIdx != '<' && startIdx != '|' {
+			continue
+		}
+
+		rxRelaxed.ReplaceAllString()
+
+		match := remainingTxt[startIdx:indexPair[1]]
+		parsedURL, err := url.Parse(match)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse URL %q: %s", match, err)
+		}
+		if parsedURL.Scheme == "" {
+			strings.ReplaceAll(txt, match, fmt.Sprintf("<http://%s|%s>", match, match))
+		} else {
+			strings.ReplaceAll(txt, match, fmt.Sprintf("<http://%s|%s>", match, match))
+		}
+	}
+
+}
+
+func escapeAmpersands(txt string) string {
+	parts := strings.Split(txt, "&")
+	if len(parts) == 1 {
+		return txt
+	}
+
+	const ampSuffix = "amp;"
+
+	var b strings.Builder
+	for i, part := range parts {
+		b.WriteString(part)
+		if i == len(parts)-1 {
+			break
+		}
+		b.WriteRune('&')
+		nextIdx := i + 1
+		if strings.HasPrefix(parts[nextIdx], ampSuffix) {
+			b.WriteString(ampSuffix)
+			parts[nextIdx] = strings.TrimPrefix(parts[nextIdx], ampSuffix)
+		}
+	}
+
+	return b.String()
+}
+
+func isEncodedURL(txt string, pair []int) bool {
+	left := pair[0] - 1
+	if left == 0 {
+		return false
+	}
+	right := pair[1] + 1
+	if right == len(txt)-1 {
+		return false
+	}
+	return txt[left] == '<' && txt[right] == '>'
+}
+
+func textMatchesAt(txt string, i int, substr string) bool {
+	if len(txt) < i {
+		return false
+	}
+
+	suffix := txt[i:]
+	lenSubstr := len(substr)
+	if len(suffix) < lenSubstr {
+		return false
+	}
+	return suffix[:lenSubstr] == substr
 }
 
 func createSlackUser(apiUser slack.User) slackUser {

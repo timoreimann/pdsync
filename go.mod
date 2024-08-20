@@ -9,6 +9,7 @@ require (
 	github.com/slack-go/slack v0.6.3
 	github.com/urfave/cli/v2 v2.1.1
 	gopkg.in/yaml.v2 v2.2.8
+	mvdan.cc/xurls/v2 v2.5.0
 )
 
 require (
