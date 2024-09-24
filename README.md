@@ -58,6 +58,9 @@ slackSyncs:
       secondary on-call: <@{{.AwesomeSecondary}}> (Slack handle: @team-awesome-on-call-secondary)
 
       reach out to both primary and secondary via @team-awesome-on-call
+
+    # Set to true to prevent tagging users (useful for testing purposes)
+    pretendUsers: false
     # Set to true to skip updating the Slack channel topic
     dryRun: false
 ```
