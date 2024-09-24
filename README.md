@@ -63,6 +63,9 @@ slackSyncs:
     pretendUsers: false
     # Set to true to skip updating the Slack channel topic
     dryRun: false
+    # Set to true to exit with an error when any sync fails
+    # (should not need to be set since reasonable default is chosen based on whether daemon mode is used)
+    failFast: false
 ```
 
 Now pdsync can be started like the following:

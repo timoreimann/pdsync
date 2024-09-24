@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -109,13 +110,17 @@ func newSyncer(sp syncerParams) *syncer {
 	}
 }
 
-func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync) error {
+func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync, failFast bool) error {
 	for _, slackSync := range slackSyncs {
 		err := s.runSlackSync(ctx, slackSync)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to run Slack sync %s: %s\n", slackSync.name, err)
-			// TODO: aggregate and return errors
-			continue
+			msg := fmt.Sprintf("failed to run Slack sync %s: %s", slackSync.name, err)
+			if failFast {
+				return errors.New(msg)
+			}
+
+			formattedMsg := strings.ToUpper(string(msg[0])) + msg[1:]
+			fmt.Fprintf(os.Stderr, "%s\n", formattedMsg)
 		}
 	}
 

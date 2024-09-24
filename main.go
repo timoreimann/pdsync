@@ -114,6 +114,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Usage:       "do not update topic",
 				Destination: &dryRun,
 			},
+			&cli.BoolFlag{
+				Name:        "fail-fast",
+				Usage:       "fail on the first schedule that cannot be synced, and otherwise handle failures gracefully (defaults to false when running in daemon mode, otherwise true)",
+				Destination: &p.failFast,
+			},
 		},
 		Action: func(c *cli.Context) error {
 			p.schedules = c.StringSlice("schedule")
@@ -123,14 +128,16 @@ By default, the program will terminate after a single run. Use the --daemon flag
 			if c.IsSet("dry-run") {
 				p.dryRun = &dryRun
 			}
+			if !c.IsSet("fail-fast") {
+				p.failFast = !p.daemon
+			}
 			return realMain(p)
 		},
 	}
 
 	err := app.Run(os.Args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		// fmt.Fprintf(os.Stderr, "%+#v\n", err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -174,7 +181,7 @@ func realMain(p params) error {
 	syncer := newSyncer(sp)
 
 	runFunc := func() error {
-		return syncer.Run(ctx, slSyncs)
+		return syncer.Run(ctx, slSyncs, p.failFast)
 	}
 	if !p.daemon {
 		return runFunc()
@@ -194,7 +201,7 @@ func realMain(p params) error {
 	go func() {
 		defer wg.Done()
 		fmt.Println("Starting daemon")
-		daemonRun(stopCtx, p.daemonUpdateFrequency, syncer, runFunc)
+		daemonRun(stopCtx, p.daemonUpdateFrequency, runFunc)
 	}()
 
 	wg.Wait()
