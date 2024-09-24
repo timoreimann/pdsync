@@ -63,18 +63,19 @@ type ConfigChannel struct {
 	ID   string `yaml:"id"`
 	Name string `yaml:"name"`
 }
+
 func (cc ConfigChannel) String() string {
 	return fmt.Sprintf("{ID:%s Name:%q}", cc.ID, cc.Name)
 }
 
-
 // ConfigSlackSync represents a synchronization between a set of PagerDuty schedules and a Slack channel.
 type ConfigSlackSync struct {
-	Name      string           `yaml:"name"`
-	Schedules []ConfigSchedule `yaml:"schedules"`
-	Channel   ConfigChannel    `yaml:"channel"`
-	Template  string           `yaml:"template"`
-	DryRun    bool             `yaml:"dryRun"`
+	Name         string           `yaml:"name"`
+	Schedules    []ConfigSchedule `yaml:"schedules"`
+	Channel      ConfigChannel    `yaml:"channel"`
+	Template     string           `yaml:"template"`
+	PretendUsers bool             `yaml:"pretendUsers"`
+	DryRun       bool             `yaml:"dryRun"`
 }
 
 type config struct {
@@ -106,8 +107,13 @@ func generateConfig(p params) (config, error) {
 		}
 	}
 
-	// If specified, let the global dry-run parameter override per-sync dry-run
-	// values.
+	// Let globally defined parameters override per-sync ones.
+
+	if p.pretendUsers != nil {
+		for i := range cfg.SlackSyncs {
+			cfg.SlackSyncs[i].PretendUsers = *p.pretendUsers
+		}
+	}
 	if p.dryRun != nil {
 		for i := range cfg.SlackSyncs {
 			cfg.SlackSyncs[i].DryRun = *p.dryRun
@@ -189,7 +195,7 @@ func parseSchedule(schedule string) (ConfigSchedule, error) {
 	}
 
 	cfgSchedule := ConfigSchedule{
-		ID: id,
+		ID:   id,
 		Name: name,
 	}
 

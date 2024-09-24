@@ -23,8 +23,9 @@ var (
 
 func main() {
 	var (
-		p      params
-		dryRun bool
+		p            params
+		dryRun       bool
+		pretendUsers bool
 	)
 	app := &cli.App{
 		Name:  "pdsync",
@@ -104,6 +105,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Destination: &includePrivateChannels,
 			},
 			&cli.BoolFlag{
+				Name:        "pretend-users",
+				Usage:       "escape Slack user IDs to prevent tagging",
+				Destination: &pretendUsers,
+			},
+			&cli.BoolFlag{
 				Name:        "dry-run",
 				Usage:       "do not update topic",
 				Destination: &dryRun,
@@ -111,6 +117,9 @@ By default, the program will terminate after a single run. Use the --daemon flag
 		},
 		Action: func(c *cli.Context) error {
 			p.schedules = c.StringSlice("schedule")
+			if c.IsSet("pretend-users") {
+				p.pretendUsers = &pretendUsers
+			}
 			if c.IsSet("dry-run") {
 				p.dryRun = &dryRun
 			}
