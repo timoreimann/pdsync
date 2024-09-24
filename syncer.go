@@ -15,6 +15,7 @@ type runSlackSync struct {
 	slackChannelID string
 	tmpl           *template.Template
 	dryRun         bool
+	pretendUsers   bool
 }
 
 type syncerParams struct {
@@ -36,8 +37,9 @@ func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runS
 
 	for _, cfgSlSync := range cfg.SlackSyncs {
 		slSync := runSlackSync{
-			name:   cfgSlSync.Name,
-			dryRun: cfgSlSync.DryRun,
+			name:         cfgSlSync.Name,
+			pretendUsers: cfgSlSync.PretendUsers,
+			dryRun:       cfgSlSync.DryRun,
 		}
 
 		if cfgSlSync.Template == "" {
@@ -154,8 +156,13 @@ func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error
 			ocgs.getOrCreate(userGroup).ensureMember(slUser.id)
 		}
 
+		slUserID := slUser.id
+		if slackSync.pretendUsers {
+			slUserID = fmt.Sprintf(`\%s`, slUserID)
+		}
+
 		cleanScheduleName := notAlphaNumRE.ReplaceAllString(schedule.name, "")
-		slackUserIDByScheduleName[cleanScheduleName] = slUser.id
+		slackUserIDByScheduleName[cleanScheduleName] = slUserID
 	}
 
 	if err := s.slClient.updateOncallGroupMembers(ctx, ocgs, slackSync.dryRun); err != nil {

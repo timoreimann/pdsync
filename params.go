@@ -9,6 +9,7 @@ type params struct {
 	channelID             string
 	tmplString            string
 	tmplFile              string
+	pretendUsers          *bool
 	dryRun                *bool
 	daemon                bool
 	daemonUpdateFrequency time.Duration
