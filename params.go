@@ -13,4 +13,5 @@ type params struct {
 	dryRun                *bool
 	daemon                bool
 	daemonUpdateFrequency time.Duration
+	failFast              bool
 }

@@ -24,8 +24,8 @@ func (schedules *pdSchedules) ensureSchedule(schedule pdSchedule) {
 }
 
 type pdSchedule struct {
-	id   string
-	name string
+	id         string
+	name       string
 	userGroups UserGroups
 }
 

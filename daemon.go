@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func daemonRun(ctx context.Context, freq time.Duration, s *syncer, f func() error) {
+func daemonRun(ctx context.Context, freq time.Duration, f func() error) {
 	ticker := time.NewTicker(freq)
 	defer ticker.Stop()
 
