@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"sync"
 	"syscall"
 	"time"
 
@@ -14,11 +13,12 @@ import (
 )
 
 var (
-	pdToken                  string
-	slToken                  string
-	notAlphaNumRE            = regexp.MustCompile(`[^[:alnum:]]`)
-	minDaemonUpdateFrequency = 1 * time.Minute
-	includePrivateChannels   bool
+	pdToken                           string
+	slToken                           string
+	notAlphaNumRE                     = regexp.MustCompile(`[^[:alnum:]]`)
+	minDaemonUpdateFrequency          = 1 * time.Minute
+	minDaemonSlackDataUpdateFrequency = 10 * time.Minute
+	includePrivateChannels            bool
 )
 
 func main() {
@@ -99,6 +99,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Usage:       "how often on-call schedules should be checked for changes (minimum is 1 minute)",
 				Destination: &p.daemonUpdateFrequency,
 			},
+			&cli.DurationFlag{
+				Name:        "daemon-slack-data-update-frequency",
+				Usage:       "how often Slack data (users, groups) should be checked for updates (minimum is 10 minutes; default is to never update; must be larger than --daemon-update-frequency value)",
+				Destination: &p.daemonSlackDataUpdateFrequency,
+			},
 			&cli.BoolFlag{
 				Name:        "include-private-channels",
 				Usage:       "update topics from rivate channels as well",
@@ -151,13 +156,23 @@ func realMain(p params) error {
 	if p.daemonUpdateFrequency < minDaemonUpdateFrequency {
 		p.daemonUpdateFrequency = minDaemonUpdateFrequency
 	}
+	if p.daemonSlackDataUpdateFrequency > 0 {
+		if p.daemonSlackDataUpdateFrequency < minDaemonSlackDataUpdateFrequency {
+			p.daemonSlackDataUpdateFrequency = minDaemonSlackDataUpdateFrequency
+		}
+
+		if p.daemonSlackDataUpdateFrequency < p.daemonUpdateFrequency {
+			return fmt.Errorf("slack data update frequency %s must be larger than daemon update frequency %s", p.daemonSlackDataUpdateFrequency, p.daemonUpdateFrequency)
+		}
+	}
 
 	sp := syncerParams{
 		pdClient: newPagerDutyClient(pdToken),
 		slClient: newSlackMetaClient(slToken, includePrivateChannels),
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 
 	fmt.Println("Getting Slack users")
 	sp.slackUsers, err = sp.slClient.getSlackUsers(ctx)
@@ -173,37 +188,24 @@ func realMain(p params) error {
 	}
 	fmt.Printf("Found %d Slack user group(s)\n", len(sp.slackUserGroups))
 
-	slSyncs, err := sp.createSlackSyncs(context.TODO(), cfg)
+	slSyncs, err := sp.createSlackSyncs(ctx, cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create Slack syncs: %s", err)
 	}
 
-	syncer := newSyncer(sp)
+	syncer := newSyncer(sp, p.failFast)
 
-	runFunc := func() error {
-		return syncer.Run(ctx, slSyncs, p.failFast)
-	}
 	if !p.daemon {
-		return runFunc()
+		return syncer.RunOnce(ctx, slSyncs)
 	}
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	stopCtx, cancel := context.WithCancel(context.Background())
+	updateSlackDataCh := make(<-chan dataUpdateResult)
+	if p.daemonSlackDataUpdateFrequency != 0 {
+		sdu := newSlackDataUpdater(p.daemonSlackDataUpdateFrequency, sp.slClient)
+		updateSlackDataCh = sdu.start(ctx)
+	}
 
-	go func() {
-		<-c
-		cancel()
-	}()
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		fmt.Println("Starting daemon")
-		daemonRun(stopCtx, p.daemonUpdateFrequency, runFunc)
-	}()
-
-	wg.Wait()
+	fmt.Println("Starting daemon")
+	syncer.daemonRun(ctx, slSyncs, p.daemonUpdateFrequency, updateSlackDataCh)
 	return nil
 }

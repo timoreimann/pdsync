@@ -102,20 +102,22 @@ func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runS
 
 type syncer struct {
 	syncerParams
+	failFast bool
 }
 
-func newSyncer(sp syncerParams) *syncer {
+func newSyncer(sp syncerParams, failFast bool) *syncer {
 	return &syncer{
 		syncerParams: sp,
+		failFast:     failFast,
 	}
 }
 
-func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync, failFast bool) error {
+func (s *syncer) RunOnce(ctx context.Context, slackSyncs []runSlackSync) error {
 	for _, slackSync := range slackSyncs {
 		err := s.runSlackSync(ctx, slackSync)
 		if err != nil {
 			msg := fmt.Sprintf("failed to run Slack sync %s: %s", slackSync.name, err)
-			if failFast {
+			if s.failFast {
 				return errors.New(msg)
 			}
 

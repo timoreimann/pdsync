@@ -293,8 +293,13 @@ func retryOnSlackRateLimit(ctx context.Context, f func(ctx context.Context) erro
 			if errors.As(err, &rle) {
 				sleep := rle.RetryAfter
 				fmt.Printf("Slack rate limit hit -- waiting %s\n", sleep)
-				time.Sleep(sleep)
-				return true, err
+
+				select {
+				case <-time.After(sleep):
+					return true, err
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
 			}
 		}
 		return false, err
