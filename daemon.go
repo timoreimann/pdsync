@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-func daemonRun(ctx context.Context, freq time.Duration, f func() error) {
+func startDaemon(ctx context.Context, freq time.Duration, f func() error) {
 	ticker := time.NewTicker(freq)
 	defer ticker.Stop()
 
 	errLogF := func() {
 		err := f()
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}

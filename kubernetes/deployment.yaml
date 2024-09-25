@@ -37,6 +37,8 @@ spec:
           - --config
           - /config/config.yaml
           - --daemon
+          # Trigger restart after 24h to force Slack data and PagerDuty schedule updates.
+          - --daemon-max-execution-time=1440m
           - --dry-run
         volumeMounts:
           - name: pdsync
