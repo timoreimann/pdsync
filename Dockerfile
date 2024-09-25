@@ -1,4 +1,4 @@
-FROM amd64/golang:1.20.3-alpine3.17 as builder
+FROM amd64/golang:1.23.1-alpine3.20 as builder
 
 WORKDIR /usr/src/pdsync
 
