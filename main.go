@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"sync"
 	"syscall"
 	"time"
 
@@ -17,7 +16,8 @@ var (
 	pdToken                  string
 	slToken                  string
 	notAlphaNumRE            = regexp.MustCompile(`[^[:alnum:]]`)
-	minDaemonUpdateFrequency = 1 * time.Minute
+	daemonMinUpdateFrequency = 1 * time.Minute
+	daemonMaxExecutionTime   time.Duration
 	includePrivateChannels   bool
 )
 
@@ -99,6 +99,11 @@ By default, the program will terminate after a single run. Use the --daemon flag
 				Usage:       "how often on-call schedules should be checked for changes (minimum is 1 minute)",
 				Destination: &p.daemonUpdateFrequency,
 			},
+			&cli.DurationFlag{
+				Name:        "daemon-max-execution-time",
+				Usage:       "time after which the daemon should self-terminate (default: never)",
+				Destination: &daemonMaxExecutionTime,
+			},
 			&cli.BoolFlag{
 				Name:        "include-private-channels",
 				Usage:       "update topics from rivate channels as well",
@@ -148,8 +153,8 @@ func realMain(p params) error {
 		return err
 	}
 
-	if p.daemonUpdateFrequency < minDaemonUpdateFrequency {
-		p.daemonUpdateFrequency = minDaemonUpdateFrequency
+	if p.daemonUpdateFrequency < daemonMinUpdateFrequency {
+		p.daemonUpdateFrequency = daemonMinUpdateFrequency
 	}
 
 	sp := syncerParams{
@@ -157,7 +162,8 @@ func realMain(p params) error {
 		slClient: newSlackMetaClient(slToken, includePrivateChannels),
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 
 	fmt.Println("Getting Slack users")
 	sp.slackUsers, err = sp.slClient.getSlackUsers(ctx)
@@ -173,9 +179,9 @@ func realMain(p params) error {
 	}
 	fmt.Printf("Found %d Slack user group(s)\n", len(sp.slackUserGroups))
 
-	slSyncs, err := sp.createSlackSyncs(context.TODO(), cfg)
+	slSyncs, err := sp.createSlackSyncs(ctx, cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create Slack syncs: %s", err)
 	}
 
 	syncer := newSyncer(sp)
@@ -187,23 +193,21 @@ func realMain(p params) error {
 		return runFunc()
 	}
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	stopCtx, cancel := context.WithCancel(context.Background())
+	daemonCtx := ctx
+	if daemonMaxExecutionTime > 0 {
+		fmt.Printf("Setting maximum daemon execution time to %s\n", daemonMaxExecutionTime)
+		var cancel context.CancelFunc
+		daemonCtx, cancel = context.WithTimeout(ctx, daemonMaxExecutionTime)
+		defer cancel()
+	}
 
-	go func() {
-		<-c
-		cancel()
-	}()
+	fmt.Println("Starting daemon")
+	startDaemon(daemonCtx, p.daemonUpdateFrequency, runFunc)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		fmt.Println("Starting daemon")
-		daemonRun(stopCtx, p.daemonUpdateFrequency, runFunc)
-	}()
-
-	wg.Wait()
+	termMessage := "Daemon terminated"
+	if daemonCtx.Err() != nil && ctx.Err() == nil {
+		termMessage += " (maximum execution time has elapsed)"
+	}
+	fmt.Println(termMessage)
 	return nil
 }
