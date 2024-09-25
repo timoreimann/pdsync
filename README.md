@@ -96,6 +96,19 @@ Add `--dry-run` to turn all mutating API requests into no-ops.
 
 Run the tool with `--help` for details.
 
+## Auto-formatting caveat
+
+Slack requires certain "interactive" parts of a message to be formatted particularly in order to be presented correctly (e.g., to make URLs clickable). Conveniently (for humans), the Slack backend automatically formats topic content as it is being sent to the API. However, for pdsync this is problematic since it needs to be able to determine reliably if a topic has changed (to avoid triggering unncessary and observable topic updates), but it cannot do so if what is being submitted to the API is different from what is being returned. For instance, a topic text such as `"go to example.com for help"` sent to the Slack API would read back as something like `"go to <http://example.com|example.com> for help"`, thereby breaking any delta check.
+
+The same holds for text that needs to be escaped, such as the `&` (ampersand) character.
+
+The recommended way to deal with this problem is to only use formatted / escaped text parts in the pdsync configuration. The [relevant Slack documentation](https://api.slack.com/reference/surfaces/formatting) has a more complete list on what this applies to; some commonly used and auto-formatted text pieces are the following:
+
+- URLs: `https://example.com` -> `<https://example.com>`
+- & (ampersand): `&` -> `&amp;`
+
+Certain Slack modules that involve formatting of some sort allow to disable auto-formatting. Unfortunately, topic content does not seem to be part of that group.
+
 ## status
 
 This tool is newish, has too few tests, and is possibly buggy. However, it did get quite some mileage already.
