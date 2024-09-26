@@ -115,7 +115,7 @@ func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync, failFast bo
 		err := s.runSlackSync(ctx, slackSync)
 		if err != nil {
 			msg := fmt.Sprintf("failed to run Slack sync %s: %s", slackSync.name, err)
-			if failFast {
+			if failFast || ctx.Err() != nil {
 				return errors.New(msg)
 			}
 
