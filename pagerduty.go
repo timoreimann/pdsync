@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -49,16 +50,16 @@ func newPagerDutyClient(token string) *pagerDutyClient {
 	}
 }
 
-func (cl *pagerDutyClient) getSchedule(id, name string) (*pdSchedule, error) {
+func (cl *pagerDutyClient) getSchedule(ctx context.Context, id, name string) (*pdSchedule, error) {
 	if id != "" {
-		schedule, err := cl.getScheduleByID(id)
+		schedule, err := cl.getScheduleByID(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get schedule by ID: %s", err)
 		}
 		return schedule, nil
 	}
 
-	schedule, err := cl.getScheduleByName(name)
+	schedule, err := cl.getScheduleByName(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schedules by name: %s", err)
 	}
@@ -66,7 +67,7 @@ func (cl *pagerDutyClient) getSchedule(id, name string) (*pdSchedule, error) {
 	return schedule, nil
 }
 
-func (cl *pagerDutyClient) getScheduleByID(scheduleID string) (*pdSchedule, error) {
+func (cl *pagerDutyClient) getScheduleByID(ctx context.Context, scheduleID string) (*pdSchedule, error) {
 	if scheduleID == "" {
 		return nil, errors.New("schedule ID is missing")
 	}
@@ -75,7 +76,7 @@ func (cl *pagerDutyClient) getScheduleByID(scheduleID string) (*pdSchedule, erro
 	var schedule *pagerduty.Schedule
 	rErr := retryOnPagerDutyRateLimit(func() error {
 		var err error
-		schedule, err = cl.GetSchedule(scheduleID, pagerduty.GetScheduleOptions{})
+		schedule, err = cl.GetScheduleWithContext(ctx, scheduleID, pagerduty.GetScheduleOptions{})
 		return err
 	})
 	if rErr != nil {
@@ -92,14 +93,14 @@ func (cl *pagerDutyClient) getScheduleByID(scheduleID string) (*pdSchedule, erro
 	}, nil
 }
 
-func (cl *pagerDutyClient) getScheduleByName(scheduleName string) (*pdSchedule, error) {
+func (cl *pagerDutyClient) getScheduleByName(ctx context.Context, scheduleName string) (*pdSchedule, error) {
 	if scheduleName == "" {
 		return nil, errors.New("schedule name is missing")
 	}
 
 	var err error
 	cl.pdSchedulesByNameOnce.Do(func() {
-		cl.pdSchedulesByName, err = cl.getAllSchedulesByName()
+		cl.pdSchedulesByName, err = cl.getAllSchedulesByName(ctx)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all schedules by name: %s", err)
@@ -113,9 +114,9 @@ func (cl *pagerDutyClient) getScheduleByName(scheduleName string) (*pdSchedule, 
 	return &pdSchedule, nil
 }
 
-func (cl *pagerDutyClient) getAllSchedulesByName() (map[string]pdSchedule, error) {
+func (cl *pagerDutyClient) getAllSchedulesByName(ctx context.Context) (map[string]pdSchedule, error) {
 	pdSchedules := map[string]pdSchedule{}
-	alo := pagerduty.APIListObject{
+	opts := pagerduty.ListSchedulesOptions{
 		Limit: 100,
 	}
 	fmt.Println("Collecting schedules")
@@ -124,7 +125,7 @@ func (cl *pagerDutyClient) getAllSchedulesByName() (map[string]pdSchedule, error
 		var schedulesResp *pagerduty.ListSchedulesResponse
 		rErr := retryOnPagerDutyRateLimit(func() error {
 			var err error
-			schedulesResp, err = cl.ListSchedules(pagerduty.ListSchedulesOptions{APIListObject: alo})
+			schedulesResp, err = cl.ListSchedulesWithContext(ctx, opts)
 			return err
 		})
 		if rErr != nil {
@@ -141,16 +142,16 @@ func (cl *pagerDutyClient) getAllSchedulesByName() (map[string]pdSchedule, error
 		if !schedulesResp.APIListObject.More {
 			break
 		}
-		alo.Offset = alo.Offset + alo.Limit
+		opts.Offset = opts.Offset + opts.Limit
 	}
 
 	return pdSchedules, nil
 }
 
-func (cl *pagerDutyClient) getOnCallUser(schedule pdSchedule) (pagerduty.User, error) {
+func (cl *pagerDutyClient) getOnCallUser(ctx context.Context, schedule pdSchedule) (pagerduty.User, error) {
 	now := time.Now()
 	fmt.Printf("Getting on-call users for schedule %s\n", schedule)
-	onCallUsers, err := cl.ListOnCallUsers(schedule.id, pagerduty.ListOnCallUsersOptions{
+	onCallUsers, err := cl.ListOnCallUsersWithContext(ctx, schedule.id, pagerduty.ListOnCallUsersOptions{
 		Since: now.Add(-1 * time.Second).Format(time.RFC3339),
 		Until: now.Format(time.RFC3339),
 	})

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -22,8 +21,9 @@ import (
 
 // SlackResponse handles parsing out errors from the web api.
 type SlackResponse struct {
-	Ok    bool   `json:"ok"`
-	Error string `json:"error"`
+	Ok               bool             `json:"ok"`
+	Error            string           `json:"error"`
+	ResponseMetadata ResponseMetadata `json:"response_metadata"`
 }
 
 func (t SlackResponse) Err() error {
@@ -38,32 +38,18 @@ func (t SlackResponse) Err() error {
 		return nil
 	}
 
-	return errors.New(t.Error)
+	return SlackErrorResponse{Err: t.Error, ResponseMetadata: t.ResponseMetadata}
 }
 
-// StatusCodeError represents an http response error.
-// type httpStatusCode interface { HTTPStatusCode() int } to handle it.
-type statusCodeError struct {
-	Code   int
-	Status string
+// SlackErrorResponse brings along the metadata of errors returned by the Slack API.
+type SlackErrorResponse struct {
+	Err              string
+	ResponseMetadata ResponseMetadata
 }
 
-func (t statusCodeError) Error() string {
-	return fmt.Sprintf("slack server error: %s", t.Status)
-}
+func (r SlackErrorResponse) Error() string { return r.Err }
 
-func (t statusCodeError) HTTPStatusCode() int {
-	return t.Code
-}
-
-func (t statusCodeError) Retryable() bool {
-	if t.Code >= 500 || t.Code == http.StatusTooManyRequests {
-		return true
-	}
-	return false
-}
-
-// RateLimitedError represents the rate limit respond from slack
+// RateLimitedError represents the rate limit response from slack
 type RateLimitedError struct {
 	RetryAfter time.Duration
 }
@@ -76,30 +62,27 @@ func (e *RateLimitedError) Retryable() bool {
 	return true
 }
 
-func fileUploadReq(ctx context.Context, path string, values url.Values, r io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest("POST", path, r)
+func fileUploadReq(ctx context.Context, path string, r io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, r)
 	if err != nil {
 		return nil, err
 	}
 
-	req = req.WithContext(ctx)
-	req.URL.RawQuery = (values).Encode()
 	return req, nil
 }
 
-func downloadFile(client httpClient, token string, downloadURL string, writer io.Writer, d debug) error {
+func downloadFile(ctx context.Context, client httpClient, token string, downloadURL string, writer io.Writer, d Debug) error {
 	if downloadURL == "" {
 		return fmt.Errorf("received empty download URL")
 	}
 
-	req, err := http.NewRequest("GET", downloadURL, &bytes.Buffer{})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, &bytes.Buffer{})
 	if err != nil {
 		return err
 	}
 
 	var bearer = "Bearer " + token
 	req.Header.Add("Authorization", bearer)
-	req.WithContext(context.Background())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -118,8 +101,8 @@ func downloadFile(client httpClient, token string, downloadURL string, writer io
 	return err
 }
 
-func formReq(endpoint string, values url.Values) (req *http.Request, err error) {
-	if req, err = http.NewRequest("POST", endpoint, strings.NewReader(values.Encode())); err != nil {
+func formReq(ctx context.Context, endpoint string, values url.Values) (req *http.Request, err error) {
+	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode())); err != nil {
 		return nil, err
 	}
 
@@ -127,13 +110,13 @@ func formReq(endpoint string, values url.Values) (req *http.Request, err error) 
 	return req, nil
 }
 
-func jsonReq(endpoint string, body interface{}) (req *http.Request, err error) {
+func jsonReq(ctx context.Context, endpoint string, body interface{}) (req *http.Request, err error) {
 	buffer := bytes.NewBuffer([]byte{})
 	if err = json.NewEncoder(buffer).Encode(body); err != nil {
 		return nil, err
 	}
 
-	if req, err = http.NewRequest("POST", endpoint, buffer); err != nil {
+	if req, err = http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer); err != nil {
 		return nil, err
 	}
 
@@ -141,8 +124,8 @@ func jsonReq(endpoint string, body interface{}) (req *http.Request, err error) {
 	return req, nil
 }
 
-func parseResponseBody(body io.ReadCloser, intf interface{}, d debug) error {
-	response, err := ioutil.ReadAll(body)
+func parseResponseBody(body io.ReadCloser, intf interface{}, d Debug) error {
+	response, err := io.ReadAll(body)
 	if err != nil {
 		return err
 	}
@@ -154,7 +137,7 @@ func parseResponseBody(body io.ReadCloser, intf interface{}, d debug) error {
 	return json.Unmarshal(response, intf)
 }
 
-func postLocalWithMultipartResponse(ctx context.Context, client httpClient, method, fpath, fieldname string, values url.Values, intf interface{}, d debug) error {
+func postLocalWithMultipartResponse(ctx context.Context, client httpClient, method, fpath, fieldname, token string, values url.Values, intf interface{}, d Debug) error {
 	fullpath, err := filepath.Abs(fpath)
 	if err != nil {
 		return err
@@ -165,15 +148,22 @@ func postLocalWithMultipartResponse(ctx context.Context, client httpClient, meth
 	}
 	defer file.Close()
 
-	return postWithMultipartResponse(ctx, client, method, filepath.Base(fpath), fieldname, values, file, intf, d)
+	return postWithMultipartResponse(ctx, client, method, filepath.Base(fpath), fieldname, token, values, file, intf, d)
 }
 
-func postWithMultipartResponse(ctx context.Context, client httpClient, path, name, fieldname string, values url.Values, r io.Reader, intf interface{}, d debug) error {
+func postWithMultipartResponse(ctx context.Context, client httpClient, path, name, fieldname, token string, values url.Values, r io.Reader, intf interface{}, d Debug) error {
 	pipeReader, pipeWriter := io.Pipe()
 	wr := multipart.NewWriter(pipeWriter)
+
 	errc := make(chan error)
 	go func() {
 		defer pipeWriter.Close()
+		defer wr.Close()
+		err := createFormFields(wr, values)
+		if err != nil {
+			errc <- err
+			return
+		}
 		ioWriter, err := wr.CreateFormFile(fieldname, name)
 		if err != nil {
 			errc <- err
@@ -189,12 +179,13 @@ func postWithMultipartResponse(ctx context.Context, client httpClient, path, nam
 			return
 		}
 	}()
-	req, err := fileUploadReq(ctx, path, values, pipeReader)
+
+	req, err := fileUploadReq(ctx, path, pipeReader)
 	if err != nil {
 		return err
 	}
 	req.Header.Add("Content-Type", wr.FormDataContentType())
-	req = req.WithContext(ctx)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	resp, err := client.Do(req)
 
 	if err != nil {
@@ -215,8 +206,21 @@ func postWithMultipartResponse(ctx context.Context, client httpClient, path, nam
 	}
 }
 
-func doPost(ctx context.Context, client httpClient, req *http.Request, parser responseParser, d debug) error {
-	req = req.WithContext(ctx)
+func createFormFields(mw *multipart.Writer, values url.Values) error {
+	for key, value := range values {
+		writer, err := mw.CreateFormField(key)
+		if err != nil {
+			return err
+		}
+		_, err = writer.Write([]byte(value[0]))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func doPost(ctx context.Context, client httpClient, req *http.Request, parser responseParser, d Debug) error {
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -232,9 +236,9 @@ func doPost(ctx context.Context, client httpClient, req *http.Request, parser re
 }
 
 // post JSON.
-func postJSON(ctx context.Context, client httpClient, endpoint, token string, json []byte, intf interface{}, d debug) error {
+func postJSON(ctx context.Context, client httpClient, endpoint, token string, json []byte, intf interface{}, d Debug) error {
 	reqBody := bytes.NewBuffer(json)
-	req, err := http.NewRequest("POST", endpoint, reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, reqBody)
 	if err != nil {
 		return err
 	}
@@ -245,9 +249,9 @@ func postJSON(ctx context.Context, client httpClient, endpoint, token string, js
 }
 
 // post a url encoded form.
-func postForm(ctx context.Context, client httpClient, endpoint string, values url.Values, intf interface{}, d debug) error {
+func postForm(ctx context.Context, client httpClient, endpoint string, values url.Values, intf interface{}, d Debug) error {
 	reqBody := strings.NewReader(values.Encode())
-	req, err := http.NewRequest("POST", endpoint, reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, reqBody)
 	if err != nil {
 		return err
 	}
@@ -255,23 +259,25 @@ func postForm(ctx context.Context, client httpClient, endpoint string, values ur
 	return doPost(ctx, client, req, newJSONParser(intf), d)
 }
 
-func getResource(ctx context.Context, client httpClient, endpoint string, values url.Values, intf interface{}, d debug) error {
-	req, err := http.NewRequest("GET", endpoint, nil)
+func getResource(ctx context.Context, client httpClient, endpoint, token string, values url.Values, intf interface{}, d Debug) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
 	req.URL.RawQuery = values.Encode()
 
 	return doPost(ctx, client, req, newJSONParser(intf), d)
 }
 
-func parseAdminResponse(ctx context.Context, client httpClient, method string, teamName string, values url.Values, intf interface{}, d debug) error {
+func parseAdminResponse(ctx context.Context, client httpClient, method string, teamName string, values url.Values, intf interface{}, d Debug) error {
 	endpoint := fmt.Sprintf(WEBAPIURLFormat, teamName, method, time.Now().Unix())
 	return postForm(ctx, client, endpoint, values, intf, d)
 }
 
-func logResponse(resp *http.Response, d debug) error {
+func logResponse(resp *http.Response, d Debug) error {
 	if d.Debug() {
 		text, err := httputil.DumpResponse(resp, true)
 		if err != nil {
@@ -299,7 +305,7 @@ func timerReset(t *time.Timer, d time.Duration) {
 	t.Reset(d)
 }
 
-func checkStatusCode(resp *http.Response, d debug) error {
+func checkStatusCode(resp *http.Response, d Debug) error {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retry, err := strconv.ParseInt(resp.Header.Get("Retry-After"), 10, 64)
 		if err != nil {
@@ -311,7 +317,7 @@ func checkStatusCode(resp *http.Response, d debug) error {
 	// Slack seems to send an HTML body along with 5xx error codes. Don't parse it.
 	if resp.StatusCode != http.StatusOK {
 		logResponse(resp, d)
-		return statusCodeError{Code: resp.StatusCode, Status: resp.Status}
+		return StatusCodeError{Code: resp.StatusCode, Status: resp.Status}
 	}
 
 	return nil
@@ -321,13 +327,16 @@ type responseParser func(*http.Response) error
 
 func newJSONParser(dst interface{}) responseParser {
 	return func(resp *http.Response) error {
+		if dst == nil {
+			return nil
+		}
 		return json.NewDecoder(resp.Body).Decode(dst)
 	}
 }
 
 func newTextParser(dst interface{}) responseParser {
 	return func(resp *http.Response) error {
-		b, err := ioutil.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}

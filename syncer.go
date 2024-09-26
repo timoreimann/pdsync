@@ -64,7 +64,7 @@ func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runS
 		pdSchedules := pdSchedules{}
 		fmt.Printf("Slack sync %s: Getting PagerDuty schedules\n", slSync.name)
 		for _, schedule := range cfgSlSync.Schedules {
-			pdSchedule, err := sp.pdClient.getSchedule(schedule.ID, schedule.Name)
+			pdSchedule, err := sp.pdClient.getSchedule(ctx, schedule.ID, schedule.Name)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create slack sync %q: failed to get schedule %s: %s", slSync.name, schedule, err)
 			}
@@ -146,7 +146,7 @@ func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error
 	slackUserIDByScheduleName := map[string]string{}
 	for _, schedule := range slackSync.pdSchedules {
 		fmt.Printf("Processing schedule %s\n", schedule)
-		onCallUser, err := s.pdClient.getOnCallUser(schedule)
+		onCallUser, err := s.pdClient.getOnCallUser(ctx, schedule)
 		if err != nil {
 			return fmt.Errorf("failed to get on call user for schedule %q: %s", schedule.name, err)
 		}
