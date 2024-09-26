@@ -112,7 +112,7 @@ func (metaClient *slackMetaClient) getChannels(ctx context.Context) (channelList
 			var err error
 			channels, nextCursor, err = metaClient.slackClient.GetConversationsContext(ctx, &slack.GetConversationsParameters{
 				Cursor:          cursor,
-				ExcludeArchived: "true",
+				ExcludeArchived: true,
 				Limit:           200,
 				Types:           metaClient.channelTypes,
 			})
@@ -136,7 +136,10 @@ func (metaClient *slackMetaClient) getChannels(ctx context.Context) (channelList
 }
 
 func (metaClient *slackMetaClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
-	return metaClient.slackClient.GetConversationInfoContext(ctx, id, false)
+	return metaClient.slackClient.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+		ChannelID:     id,
+		IncludeLocale: true,
+	})
 }
 
 func (metaClient *slackMetaClient) getUserGroups(ctx context.Context) ([]UserGroup, error) {
