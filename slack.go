@@ -137,8 +137,7 @@ func (metaClient *slackMetaClient) getChannels(ctx context.Context) (channelList
 
 func (metaClient *slackMetaClient) getChannelByID(ctx context.Context, id string) (*slack.Channel, error) {
 	return metaClient.slackClient.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-		ChannelID:     id,
-		IncludeLocale: true,
+		ChannelID: id,
 	})
 }
 
