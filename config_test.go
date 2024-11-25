@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -53,7 +55,7 @@ func TestParseSchedule(t *testing.T) {
 			name:       "valid schedule with all user group specifiers",
 			inSchedule: "id=schedule;userGroup=id=123;userGroup=name=user group 2;userGroup=handle=my-ug",
 			wantCfg: ConfigSchedule{
-				ID:         "schedule",
+				ID: "schedule",
 				UserGroups: UserGroups{
 					{
 						ID: "123",
@@ -82,6 +84,61 @@ func TestParseSchedule(t *testing.T) {
 				}
 			} else if diff := cmp.Diff(tt.wantCfg, gotCfg); diff != "" {
 				t.Errorf("ConfigSchedule mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestPopulateChannel(t *testing.T) {
+	allChannels := channelList{}
+	err := json.Unmarshal([]byte(`[{ "id": "1", "name": "Foo" }, { "name": "Bar", "id": "2" }]`), &allChannels)
+	if err != nil {
+		t.Fatalf("Unable to convert json to slack: %s", err)
+	}
+
+	tests := []struct {
+		title       string
+		name        string
+		id          string
+		wantErrStr  string
+		wantChannel *ConfigChannel
+	}{
+		{
+			title:      "no match",
+			name:       "foo",
+			wantErrStr: `failed to find configured Slack channel {ID: Name:"foo"}`,
+		},
+		{
+			title:       "By Name",
+			name:        "Foo",
+			wantChannel: &ConfigChannel{Name: "Foo", ID: "1"},
+		},
+		{
+			title:       "By ID",
+			id:          "2",
+			wantChannel: &ConfigChannel{Name: "Bar", ID: "2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			cfg := &ConfigSlackSync{
+				Channel: &ConfigChannel{
+					ID:   tt.id,
+					Name: tt.name,
+				},
+			}
+			err := cfg.populateChannel(context.Background(), allChannels)
+			if tt.wantErrStr != "" {
+				var gotErrStr string
+				if err != nil {
+					gotErrStr = err.Error()
+				}
+				if !strings.Contains(gotErrStr, tt.wantErrStr) {
+					t.Errorf("got error string %q, want %q", gotErrStr, tt.wantErrStr)
+				}
+			} else if diff := cmp.Diff(tt.wantChannel, cfg.Channel); diff != "" {
+				t.Errorf("ConfigChannel mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

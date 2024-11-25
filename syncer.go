@@ -14,9 +14,10 @@ type runSlackSync struct {
 	name           string
 	pdSchedules    pdSchedules
 	slackChannelID string
-	tmpl           *template.Template
+	topicTemplate  *template.Template
 	dryRun         bool
 	pretendUsers   bool
+	slChannels     *channelList
 }
 
 type syncerParams struct {
@@ -29,13 +30,6 @@ type syncerParams struct {
 func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runSlackSync, error) {
 	var slSyncs []runSlackSync
 
-	fmt.Println("Getting Slack channels")
-	slChannels, err := sp.slClient.getChannels(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get channels: %s", err)
-	}
-	fmt.Printf("Got %d Slack channel(s)\n", len(slChannels))
-
 	for _, cfgSlSync := range cfg.SlackSyncs {
 		slSync := runSlackSync{
 			name:         cfgSlSync.Name,
@@ -43,22 +37,8 @@ func (sp syncerParams) createSlackSyncs(ctx context.Context, cfg config) ([]runS
 			dryRun:       cfgSlSync.DryRun,
 		}
 
-		if cfgSlSync.Template == "" {
+		if cfgSlSync.Template == nil {
 			fmt.Printf("Slack sync %s: skipping topic handling because template is undefined\n", slSync.name)
-		} else {
-			var err error
-			slSync.tmpl, err = template.New("topic").Parse(cfgSlSync.Template)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create slack sync %q: failed to parse template %q: %s", slSync.name, cfgSlSync.Template, err)
-			}
-
-			cfgChannel := cfgSlSync.Channel
-			slChannel := slChannels.find(cfgChannel.ID, cfgChannel.Name)
-			if slChannel == nil {
-				return nil, fmt.Errorf("failed to create slack sync %q: failed to find configured Slack channel %s", slSync.name, cfgChannel)
-			}
-			slSync.slackChannelID = slChannel.ID
-			fmt.Printf("Slack sync %s: found Slack channel %q (ID %s)\n", slSync.name, slChannel.Name, slChannel.ID)
 		}
 
 		pdSchedules := pdSchedules{}
@@ -127,20 +107,58 @@ func (s *syncer) Run(ctx context.Context, slackSyncs []runSlackSync, failFast bo
 	return nil
 }
 
-func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error {
-	if !slackSync.dryRun {
-		joined, err := s.slClient.joinChannel(ctx, slackSync.slackChannelID)
-		if err != nil {
-			if strings.Contains(err.Error(), "missing_scope") {
-				fmt.Printf(`cannot automatically join channel with ID %s because of missing scope "channels:join" -- please add the scope or join pdsync manually`, slackSync.slackChannelID)
-			} else {
-				return fmt.Errorf("failed to join channel with ID %s: %s", slackSync.slackChannelID, err)
-			}
-		}
-		if joined {
-			fmt.Printf("joined channel with ID %s\n", slackSync.slackChannelID)
+func (s *syncer) joinChannel(ctx context.Context, slackSync runSlackSync) error {
+	if slackSync.dryRun {
+		return nil
+	}
+
+	if len(slackSync.slackChannelID) == 0 {
+		fmt.Printf("no channel for %s slack sync, so skip joining", slackSync.name)
+		return nil
+	}
+
+	joined, err := s.slClient.joinChannel(ctx, slackSync.slackChannelID)
+	if err != nil {
+		if strings.Contains(err.Error(), "missing_scope") {
+			fmt.Printf(`cannot automatically join channel with ID %s because of missing scope "channels:join" -- please add the scope or join pdsync manually`, slackSync.slackChannelID)
+		} else {
+			return fmt.Errorf("failed to join channel with ID %s: %s", slackSync.slackChannelID, err)
 		}
 	}
+	if joined {
+		fmt.Printf("joined channel with ID %s\n", slackSync.slackChannelID)
+	}
+
+	return nil
+}
+
+func (s *syncer) updateTopic(ctx context.Context, slackSync runSlackSync, slackUserIDByScheduleName map[string]string) error {
+	if slackSync.dryRun {
+		return nil
+	}
+
+	if slackSync.topicTemplate == nil {
+		fmt.Println("Skipping topic update")
+		return nil
+	}
+
+	var buf bytes.Buffer
+	fmt.Printf("Executing template with Slack user IDs by schedule name: %s\n", slackUserIDByScheduleName)
+	err := slackSync.topicTemplate.Execute(&buf, slackUserIDByScheduleName)
+	if err != nil {
+		return fmt.Errorf("failed to render template: %s", err)
+	}
+
+	topic := buf.String()
+	err = s.slClient.updateTopic(ctx, slackSync.slackChannelID, topic, slackSync.dryRun)
+	if err != nil {
+		return fmt.Errorf("failed to update topic: %s", err)
+	}
+	return nil
+}
+
+func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error {
+	s.joinChannel(ctx, slackSync)
 
 	ocgs := oncallGroups{}
 	slackUserIDByScheduleName := map[string]string{}
@@ -174,21 +192,8 @@ func (s *syncer) runSlackSync(ctx context.Context, slackSync runSlackSync) error
 		return fmt.Errorf("failed to update on-call user group members: %s", err)
 	}
 
-	if slackSync.tmpl == nil {
-		fmt.Println("Skipping topic update")
-	} else {
-		var buf bytes.Buffer
-		fmt.Printf("Executing template with Slack user IDs by schedule name: %s\n", slackUserIDByScheduleName)
-		err := slackSync.tmpl.Execute(&buf, slackUserIDByScheduleName)
-		if err != nil {
-			return fmt.Errorf("failed to render template: %s", err)
-		}
-
-		topic := buf.String()
-		err = s.slClient.updateTopic(ctx, slackSync.slackChannelID, topic, slackSync.dryRun)
-		if err != nil {
-			return fmt.Errorf("failed to update topic: %s", err)
-		}
+	if err := s.updateTopic(ctx, slackSync, slackUserIDByScheduleName); err != nil {
+		return fmt.Errorf("failed to channel template: %s", err)
 	}
 
 	return nil

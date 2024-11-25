@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
+	"text/template"
 
 	"gopkg.in/yaml.v2"
 )
@@ -70,12 +72,46 @@ func (cc ConfigChannel) String() string {
 
 // ConfigSlackSync represents a synchronization between a set of PagerDuty schedules and a Slack channel.
 type ConfigSlackSync struct {
-	Name         string           `yaml:"name"`
-	Schedules    []ConfigSchedule `yaml:"schedules"`
-	Channel      ConfigChannel    `yaml:"channel"`
-	Template     string           `yaml:"template"`
-	PretendUsers bool             `yaml:"pretendUsers"`
-	DryRun       bool             `yaml:"dryRun"`
+	Name           string             `yaml:"name"`
+	Schedules      []ConfigSchedule   `yaml:"schedules"`
+	Channel        *ConfigChannel     `yaml:"channel"`
+	Template       *template.Template `yaml:"-"`
+	templateString string             `yaml:"template"`
+	PretendUsers   bool               `yaml:"pretendUsers"`
+	DryRun         bool               `yaml:"dryRun"`
+}
+
+func (css *ConfigSlackSync) populateChannel(_ context.Context, allChannels channelList) error {
+	if css.Channel == nil {
+		return nil
+	}
+
+	slChannel := allChannels.find(css.Channel.ID, css.Channel.Name)
+	if slChannel == nil {
+		return fmt.Errorf("failed to find configured Slack channel %s", css.Channel)
+	}
+
+	css.Channel = &ConfigChannel{
+		ID:   slChannel.ID,
+		Name: slChannel.Name,
+	}
+
+	fmt.Printf("Slack sync %s: found Slack channel %q (ID %s)\n", css.Name, css.Channel.Name, css.Channel.ID)
+	return nil
+}
+
+func (css *ConfigSlackSync) populateTemplate(_ context.Context) error {
+	if css.templateString == "" {
+		return nil
+	}
+
+	var err error
+	css.Template, err = template.New("topic").Parse(css.templateString)
+	if err != nil {
+		return fmt.Errorf("failed to parse %s's template %q: %s", css.Name, css.templateString, err)
+	}
+
+	return nil
 }
 
 type config struct {
@@ -95,7 +131,7 @@ func generateConfig(p params) (config, error) {
 		}
 	} else {
 		if p.tmplFile != "" {
-			b, err := ioutil.ReadFile(p.tmplFile)
+			b, err := os.ReadFile(p.tmplFile)
 			if err != nil {
 				return config{}, err
 			}
@@ -114,22 +150,18 @@ func generateConfig(p params) (config, error) {
 			cfg.SlackSyncs[i].PretendUsers = *p.pretendUsers
 		}
 	}
+
 	if p.dryRun != nil {
 		for i := range cfg.SlackSyncs {
 			cfg.SlackSyncs[i].DryRun = *p.dryRun
 		}
 	}
 
-	err = validateConfig(&cfg)
-	if err != nil {
-		return config{}, err
-	}
-
 	return cfg, err
 }
 
 func readConfigFile(file string) (config, error) {
-	content, err := ioutil.ReadFile(file)
+	content, err := os.ReadFile(file)
 	if err != nil {
 		return config{}, err
 	}
@@ -142,11 +174,13 @@ func readConfigFile(file string) (config, error) {
 func singleSlackSync(p params) (config, error) {
 	slackSync := ConfigSlackSync{
 		Name: "default",
-		Channel: ConfigChannel{
+	}
+
+	if len(p.channelID) != 0 || len(p.channelName) != 0 {
+		slackSync.Channel = &ConfigChannel{
 			ID:   p.channelID,
 			Name: p.channelName,
-		},
-		Template: p.tmplString,
+		}
 	}
 	for _, schedule := range p.schedules {
 		cfgSchedule, err := parseSchedule(schedule)
@@ -229,7 +263,7 @@ func parseSchedule(schedule string) (ConfigSchedule, error) {
 	return cfgSchedule, nil
 }
 
-func validateConfig(cfg *config) error {
+func (cfg *config) validateConfig() error {
 	foundNames := map[string]bool{}
 	for _, sync := range cfg.SlackSyncs {
 		if _, ok := foundNames[sync.Name]; ok {
@@ -248,8 +282,8 @@ func validateConfig(cfg *config) error {
 			}
 		}
 
-		channelGiven := sync.Channel.ID != "" || sync.Channel.Name != ""
-		if sync.Template != "" {
+		channelGiven := sync.Channel != nil
+		if sync.Template != nil {
 			if !channelGiven {
 				return fmt.Errorf("slack sync %q invalid: must specify either channel ID or channel name when topic is given", sync.Name)
 			}

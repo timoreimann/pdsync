@@ -62,6 +62,7 @@ By default, the program will terminate after a single run. Use the --daemon flag
 			&cli.StringFlag{
 				Name:        "config",
 				Usage:       "config file to use",
+				EnvVars:     []string{"CONFIG_FILE"},
 				Destination: &p.config,
 			},
 			&cli.StringSliceFlag{
@@ -179,9 +180,31 @@ func realMain(p params) error {
 	}
 	fmt.Printf("Found %d Slack user group(s)\n", len(sp.slackUserGroups))
 
+	fmt.Println("Getting Slack channels")
+	slChannels, err := sp.slClient.getChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get channels: %s", err)
+	}
+	fmt.Printf("Got %d Slack channel(s)\n", len(slChannels))
+
+	for _, cfgSlSync := range cfg.SlackSyncs {
+		if err := cfgSlSync.populateChannel(ctx, slChannels); err != nil {
+			return fmt.Errorf("failed to populate channel %s", err)
+		}
+
+		if err := cfgSlSync.populateTemplate(ctx); err != nil {
+			return fmt.Errorf("failed to populate templates: %s", err)
+		}
+	}
+
 	slSyncs, err := sp.createSlackSyncs(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create Slack syncs: %s", err)
+	}
+
+	err = cfg.validateConfig()
+	if err != nil {
+		return fmt.Errorf("failed to validate config: %s", err)
 	}
 
 	syncer := newSyncer(sp)
